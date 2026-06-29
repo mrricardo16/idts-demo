@@ -1,0 +1,379 @@
+:root {
+  color: #d8e6ec;
+  background: #071013;
+  font-family:
+    Inter, "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(33, 193, 122, 0.08), transparent 28rem),
+    radial-gradient(circle at 78% 12%, rgba(45, 140, 255, 0.16), transparent 22rem),
+    #071013;
+}
+
+button {
+  font: inherit;
+}
+
+.twin-shell {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+}
+
+.twin-header {
+  display: flex;
+  min-height: 84px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid rgba(139, 181, 193, 0.22);
+  border-radius: 8px;
+  background: rgba(9, 22, 26, 0.76);
+  padding: 16px 18px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28);
+}
+
+.twin-kicker,
+.twin-header p {
+  margin: 0;
+  color: #8bb5c1;
+}
+
+.twin-kicker {
+  margin-bottom: 4px;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.twin-header h1 {
+  margin: 0 0 6px;
+  color: #f2f8fa;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.tool-button {
+  min-height: 44px;
+  cursor: pointer;
+  border: 1px solid rgba(105, 240, 255, 0.42);
+  border-radius: 6px;
+  background: rgba(45, 140, 255, 0.14);
+  color: #dff9ff;
+  padding: 0 16px;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.tool-button:hover,
+.tool-button:focus-visible {
+  border-color: rgba(105, 240, 255, 0.82);
+  background: rgba(45, 140, 255, 0.24);
+  outline: none;
+}
+
+.twin-workbench {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px;
+}
+
+.viewport-wrap {
+  position: relative;
+  min-height: 560px;
+  overflow: hidden;
+  border: 1px solid rgba(139, 181, 193, 0.2);
+  border-radius: 8px;
+  background: #071013;
+}
+
+.twin-viewport {
+  width: 100%;
+  height: 100%;
+  min-height: 560px;
+}
+
+.twin-viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.viewport-badge {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  border: 1px solid rgba(33, 193, 122, 0.44);
+  border-radius: 6px;
+  background: rgba(5, 16, 18, 0.72);
+  color: #bfffe4;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.viewport-badge.warning {
+  border-color: rgba(242, 201, 76, 0.5);
+  color: #ffe9a8;
+}
+
+.side-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+}
+
+.panel-section {
+  border: 1px solid rgba(139, 181, 193, 0.22);
+  border-radius: 8px;
+  background: rgba(9, 22, 26, 0.78);
+  padding: 14px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  color: #f2f8fa;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.mesh-code {
+  overflow-wrap: anywhere;
+  color: #69f0ff;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.device-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.device-detail div,
+.load-meta div {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.device-detail span,
+.load-meta dt {
+  color: #8bb5c1;
+  font-size: 13px;
+}
+
+.device-detail strong,
+.load-meta dd {
+  margin: 0;
+  color: #edf7fa;
+  font-size: 14px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.status-text.status-normal,
+.legend-dot.status-normal {
+  color: #21c17a;
+}
+
+.status-text.status-running,
+.legend-dot.status-running {
+  color: #2d8cff;
+}
+
+.status-text.status-warning,
+.legend-dot.status-warning {
+  color: #f2c94c;
+}
+
+.status-text.status-error,
+.legend-dot.status-error {
+  color: #ff4d5a;
+}
+
+.status-text.status-stopped,
+.legend-dot.status-stopped {
+  color: #8b95a5;
+}
+
+.load-message {
+  margin: 0 0 12px;
+  color: #c6d7dd;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.load-meta {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.legend-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legend-list li {
+  display: grid;
+  grid-template-columns: 12px 52px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: #d8e6ec;
+  font-size: 14px;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 14px currentColor;
+}
+
+.legend-list code {
+  color: #8bb5c1;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+
+.device-list-section {
+  min-height: 0;
+}
+
+.device-list {
+  display: grid;
+  gap: 8px;
+}
+
+.device-row {
+  display: grid;
+  min-height: 52px;
+  cursor: pointer;
+  grid-template-columns: 12px minmax(0, 1fr) 44px;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(139, 181, 193, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #d8e6ec;
+  padding: 9px 10px;
+  text-align: left;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.device-row:hover,
+.device-row:focus-visible,
+.device-row.active {
+  border-color: rgba(105, 240, 255, 0.58);
+  background: rgba(45, 140, 255, 0.12);
+  outline: none;
+}
+
+.device-row-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.device-row-main strong,
+.device-row-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-row-main strong {
+  color: #f2f8fa;
+  font-size: 14px;
+}
+
+.device-row-main small,
+.device-row-status {
+  color: #8bb5c1;
+  font-size: 12px;
+}
+
+.device-row-status {
+  text-align: right;
+}
+
+@media (max-width: 980px) {
+  .twin-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .side-panel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .twin-shell {
+    padding: 10px;
+  }
+
+  .twin-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .twin-header h1 {
+    font-size: 21px;
+  }
+
+  .tool-button {
+    width: 100%;
+  }
+
+  .viewport-wrap,
+  .twin-viewport {
+    min-height: 420px;
+  }
+
+  .side-panel {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
