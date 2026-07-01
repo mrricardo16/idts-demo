@@ -1,25 +1,64 @@
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { PerspectiveCamera } from "three";
+import type { Object3D, PerspectiveCamera } from "three";
+import { FreeLookControls } from "./FreeLookControls";
+import type { CameraControlDebugState } from "../types/twin";
 
 export class ControlsManager {
-  readonly controls: OrbitControls;
+  private readonly freeLookControls: FreeLookControls;
 
-  constructor(camera: PerspectiveCamera, domElement: HTMLElement) {
-    this.controls = new OrbitControls(camera, domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    this.controls.target.set(0, 1.6, 0);
-    this.controls.minDistance = 4;
-    this.controls.maxDistance = 24;
-    this.controls.maxPolarAngle = Math.PI * 0.48;
-    this.controls.update();
+  constructor(camera: PerspectiveCamera, domElement: HTMLElement, onChange: () => void) {
+    this.freeLookControls = new FreeLookControls(camera, domElement, onChange);
   }
 
   update(): void {
-    this.controls.update();
+    this.freeLookControls.update();
+  }
+
+  getDebugState(): CameraControlDebugState {
+    const state = this.freeLookControls.getDebugState();
+    return {
+      navigationMode: "free-look",
+      orbitControls: "disabled",
+      zoomMode: "move-along-camera-forward",
+      zoomToCursor: false,
+      customWheelZoom: "free-look-wheel",
+      leftMouse: "look direction",
+      rightMouse: "disabled",
+      wheelZoomFocus: "camera.forward",
+      controlsTargetUsage: "not used for wheel zoom",
+      modelSelfRotation: "disabled",
+      cameraDistance: state.cameraDistance,
+      controlsTarget: state.focusPoint,
+      cameraForward: state.cameraForward,
+      cameraPosition: state.cameraPosition,
+      yawDeg: state.yawDeg,
+      pitchDeg: state.pitchDeg,
+      wheelMoveSpeed: state.wheelMoveSpeed,
+      lookSensitivity: state.lookSensitivity,
+      invertLookX: state.invertLookX,
+      invertLookY: state.invertLookY,
+      keyboardMove: state.keyboardMove,
+      keyboardMoveMode: state.keyboardMoveMode,
+      pressedKeys: state.pressedKeys,
+      navigationActive: state.active,
+      keyMoveSpeed: state.keyMoveSpeed,
+      minDistance: state.minDistance,
+      maxDistance: state.maxDistance,
+    };
+  }
+
+  focusModel(root: Object3D): boolean {
+    return this.freeLookControls.focusModel(root);
+  }
+
+  focusObject(object: Object3D, options: { padding?: number } = {}): boolean {
+    return this.freeLookControls.focusObject(object, options);
+  }
+
+  resetView(): void {
+    this.freeLookControls.resetView();
   }
 
   dispose(): void {
-    this.controls.dispose();
+    this.freeLookControls.dispose();
   }
 }

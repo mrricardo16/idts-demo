@@ -12,6 +12,11 @@ source-models/*.glb
 source-models/*.GLB
 source-models/*.gltf
 source-models/*.GLTF
+public/models/lifter.high.glb
+public/models/lifter.medium.glb
+public/models/lifter.low.glb
+public/models/lifter.proxy.glb
+public/models/lifter/*.glb
 node_modules/
 dist/
 *.tsbuildinfo

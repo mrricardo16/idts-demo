@@ -1,0 +1,16 @@
+{
+  "modelConfigPath": "public/model-configs/lifter.json",
+  "manifestPath": "public/models/lifter/manifest.json",
+  "defaultModelPath": "public/models/lifter.glb",
+  "warnOnly": true,
+  "budgets": {
+    "maxFileSizeMb": 120,
+    "maxMeshCount": 1500,
+    "maxMaterialCount": 200,
+    "maxVertexCount": 2000000,
+    "maxTriangleCount": 1000000
+  },
+  "requiredLevels": ["source"],
+  "optionalLevels": ["high", "medium", "low"],
+  "forbiddenSourceExtensions": [".step", ".stp", ".iges", ".igs", ".fbx"]
+}

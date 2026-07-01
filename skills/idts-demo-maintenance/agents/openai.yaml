@@ -1,0 +1,4 @@
+interface:
+  display_name: "IDTS Demo Maintenance"
+  short_description: "Rules for maintaining the idts-demo project."
+  default_prompt: "Use $idts-demo-maintenance when changing the idts-demo WebGL or Three.js demo."

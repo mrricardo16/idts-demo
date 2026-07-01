@@ -6,6 +6,13 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vue-tsc -b && vite build",
+    "export:model-structure": "node scripts/export-model-structure.mjs",
+    "inspect:model": "node scripts/inspect-model.mjs",
+    "model:inspect": "node scripts/inspect-model.mjs",
+    "optimize:model": "node scripts/optimize-model.mjs",
+    "generate:lod": "node scripts/generate-lod.mjs",
+    "model:lod": "node scripts/generate-lod.mjs",
+    "model:budget": "node scripts/check-model-budget.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

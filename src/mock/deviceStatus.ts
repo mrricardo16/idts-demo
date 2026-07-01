@@ -2,6 +2,7 @@ import type { DeviceStatus, TwinDevice } from "../types/twin";
 
 export const statusLabels: Record<DeviceStatus, string> = {
   normal: "正常",
+  arrived: "到达",
   running: "运行",
   warning: "预警",
   error: "故障",
@@ -10,6 +11,7 @@ export const statusLabels: Record<DeviceStatus, string> = {
 
 export const statusColors: Record<DeviceStatus, number> = {
   normal: 0x21c17a,
+  arrived: 0x4ee6b1,
   running: 0x2d8cff,
   warning: 0xf2c94c,
   error: 0xff4d5a,
@@ -18,6 +20,7 @@ export const statusColors: Record<DeviceStatus, number> = {
 
 export const statusClassNames: Record<DeviceStatus, string> = {
   normal: "status-normal",
+  arrived: "status-arrived",
   running: "status-running",
   warning: "status-warning",
   error: "status-error",

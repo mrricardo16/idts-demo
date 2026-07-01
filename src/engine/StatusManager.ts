@@ -6,6 +6,7 @@ const statuses: DeviceStatus[] = ["normal", "running", "warning", "error", "stop
 
 export class StatusManager {
   private readonly devices = createMockDevices();
+  private readonly lockedDeviceIds = new Set<string>();
 
   getDevices(): TwinDevice[] {
     return this.devices.map((device) => ({ ...device }));
@@ -13,6 +14,11 @@ export class StatusManager {
 
   getByMeshName(meshName: string): TwinDevice | undefined {
     const device = this.devices.find((item) => item.meshName === meshName);
+    return device ? { ...device } : undefined;
+  }
+
+  getById(deviceId: string): TwinDevice | undefined {
+    const device = this.devices.find((item) => item.id === deviceId);
     return device ? { ...device } : undefined;
   }
 
@@ -26,9 +32,29 @@ export class StatusManager {
 
     for (const index of updatedIndexes) {
       const device = this.devices[index];
+      if (this.lockedDeviceIds.has(device.id)) {
+        continue;
+      }
+
       const nextStatus = statuses[Math.floor(Math.random() * statuses.length)];
       device.status = nextStatus;
       device.updateTime = createUpdateTime();
+    }
+
+    return this.getDevices();
+  }
+
+  setDeviceStatus(deviceId: string, status: DeviceStatus, locked = false): TwinDevice[] {
+    const device = this.devices.find((item) => item.id === deviceId);
+    if (device) {
+      device.status = status;
+      device.updateTime = createUpdateTime();
+    }
+
+    if (locked) {
+      this.lockedDeviceIds.add(deviceId);
+    } else {
+      this.lockedDeviceIds.delete(deviceId);
     }
 
     return this.getDevices();

@@ -1,30 +1,105 @@
-import type { Object3D } from "three";
+import { Vector3, type Object3D } from "three";
+
+interface MoveByWorldZRequest {
+  object: Object3D;
+  targetWorldPosition: Vector3;
+  unitsPerSecond: number;
+  onUpdate?: (currentWorldPosition: Vector3) => void;
+  onComplete?: () => void;
+}
+
+interface ActiveMove extends MoveByWorldZRequest {
+  lastUpdateTime: number;
+  startLocalPosition: Vector3;
+  startWorldPosition: Vector3;
+  targetLocalPosition: Vector3;
+  distance: number;
+}
+
+function getWorldPosition(object: Object3D): Vector3 {
+  object.updateMatrixWorld(true);
+  return object.getWorldPosition(new Vector3());
+}
+
+function worldToParentLocal(object: Object3D, worldPosition: Vector3): Vector3 {
+  const localPosition = worldPosition.clone();
+  object.parent?.updateMatrixWorld(true);
+  object.parent?.worldToLocal(localPosition);
+  return localPosition;
+}
 
 export class AnimationManager {
-  private readonly startedAt = performance.now();
+  private activeMove?: ActiveMove;
 
-  constructor(private readonly root: Object3D) {}
-
-  update(): void {
-    const elapsed = (performance.now() - this.startedAt) / 1000;
-
-    const platform = this.root.getObjectByName("lifter-platform");
-    if (platform) {
-      const baseY = Number(platform.userData.baseY ?? platform.position.y);
-      platform.position.y = baseY + Math.sin(elapsed * 1.1) * 0.38;
-    }
-
-    this.updatePallet("pallet-01", elapsed, 0);
-    this.updatePallet("pallet-02", elapsed, Math.PI);
+  hasActiveAnimation(): boolean {
+    return Boolean(this.activeMove);
   }
 
-  private updatePallet(meshName: string, elapsed: number, offset: number): void {
-    const pallet = this.root.getObjectByName(meshName);
-    if (!pallet) {
-      return;
+  moveObjectByWorldZ(object: Object3D, deltaZ: number): Vector3 {
+    const targetWorldPosition = getWorldPosition(object);
+    targetWorldPosition.z += deltaZ;
+    object.position.copy(worldToParentLocal(object, targetWorldPosition));
+    object.updateMatrixWorld(true);
+    return targetWorldPosition;
+  }
+
+  moveObjectToWorldPosition(request: MoveByWorldZRequest): void {
+    const startLocalPosition = request.object.position.clone();
+    const startWorldPosition = getWorldPosition(request.object);
+    const targetLocalPosition = worldToParentLocal(request.object, request.targetWorldPosition);
+    const distance = startWorldPosition.distanceTo(request.targetWorldPosition);
+
+    this.activeMove = {
+      ...request,
+      startLocalPosition,
+      startWorldPosition,
+      targetLocalPosition,
+      distance,
+      lastUpdateTime: performance.now(),
+    };
+    request.onUpdate?.(getWorldPosition(request.object));
+  }
+
+  update(): boolean {
+    if (!this.activeMove) {
+      return false;
     }
 
-    const baseX = Number(pallet.userData.baseX ?? pallet.position.x);
-    pallet.position.x = baseX + Math.sin(elapsed * 0.8 + offset) * 0.92;
+    const now = performance.now();
+    const deltaSeconds = Math.max(0, (now - this.activeMove.lastUpdateTime) / 1000);
+    this.activeMove.lastUpdateTime = now;
+
+    if (this.activeMove.distance <= 0) {
+      this.activeMove.object.position.copy(this.activeMove.targetLocalPosition);
+      this.activeMove.object.updateMatrixWorld(true);
+      this.activeMove.onUpdate?.(getWorldPosition(this.activeMove.object));
+      this.activeMove.onComplete?.();
+      this.activeMove = undefined;
+      return false;
+    }
+
+    const currentStep = getWorldPosition(this.activeMove.object).distanceTo(
+      this.activeMove.startWorldPosition,
+    );
+    const nextStep = Math.min(
+      this.activeMove.distance,
+      currentStep + this.activeMove.unitsPerSecond * deltaSeconds,
+    );
+    const progress = nextStep / this.activeMove.distance;
+    this.activeMove.object.position.lerpVectors(
+      this.activeMove.startLocalPosition,
+      this.activeMove.targetLocalPosition,
+      progress,
+    );
+    this.activeMove.object.updateMatrixWorld(true);
+    this.activeMove.onUpdate?.(getWorldPosition(this.activeMove.object));
+
+    if (progress >= 1) {
+      this.activeMove.onComplete?.();
+      this.activeMove = undefined;
+      return false;
+    }
+
+    return true;
   }
 }

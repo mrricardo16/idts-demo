@@ -1,0 +1,44 @@
+{
+  "modelId": "lifter",
+  "modelName": "提升机",
+  "modelUrl": "/models/lifter.glb",
+  "upAxis": "z",
+  "transform": {
+    "rotationDeg": {
+      "x": 180,
+      "y": 0,
+      "z": 0
+    },
+    "position": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "autoCenter": true,
+    "groundToZero": true
+  },
+  "bindings": {
+    "rootName": "lifter-main",
+    "movablePartName": "lifter-platform",
+    "moveAxis": "z"
+  },
+  "lod": {
+    "sourceUrl": "/models/lifter.glb",
+    "proxyUrl": "/models/lifter/lifter.proxy.glb",
+    "lowUrl": "/models/lifter/lifter.low.glb",
+    "mediumUrl": "/models/lifter/lifter.medium.glb",
+    "highUrl": "/models/lifter/lifter.high.glb",
+    "defaultLevel": "source",
+    "selectedLevel": "high",
+    "autoLoadHighOnSelect": false,
+    "allowGeneratedProxy": false,
+    "initialFallbackOrder": ["medium", "low", "source", "high", "proxy"],
+    "nearDistance": 20,
+    "farDistance": 80
+  }
+}
