@@ -1,3 +1,10 @@
+import type {
+  ModelFaultSimulationConfig,
+  ModelMaterialConfig,
+  ModelModeConfig,
+  ModelPerformanceConfig,
+} from "./modelConfig";
+
 export type DeviceStatus =
   | "normal"
   | "arrived"
@@ -192,8 +199,17 @@ export interface LifterBindingState {
   baseWorldPosition?: VectorSnapshot;
   targetWorldPosition?: VectorSnapshot;
   baseWorldZ?: number;
+  startWorldZ?: number;
   currentWorldZ?: number;
   targetWorldZ?: number;
+  clampedTargetWorldZ?: number;
+  modelMinZ?: number;
+  modelMaxZ?: number;
+  movableHeight?: number;
+  minAllowedWorldZ?: number;
+  maxAllowedWorldZ?: number;
+  targetClamped?: boolean;
+  moveBasis?: "current world position";
   moveMode?: "worldZ";
   boundingBox?: BoundingBoxSnapshot | null;
   moveAxis: MoveAxis;
@@ -222,8 +238,17 @@ export interface LifterTask {
   finishTime?: string;
   message?: string;
   currentZ?: number;
+  startWorldZ?: number;
   currentWorldZ?: number;
   targetWorldZ?: number;
+  clampedTargetWorldZ?: number;
+  modelMinZ?: number;
+  modelMaxZ?: number;
+  movableHeight?: number;
+  minAllowedWorldZ?: number;
+  maxAllowedWorldZ?: number;
+  targetClamped?: boolean;
+  moveBasis?: "current world position";
 }
 
 export interface LifterTaskRequest {
@@ -237,6 +262,7 @@ export type ModelUpAxis = "x" | "y" | "z";
 export type ModelLODLevel = "proxy" | "low" | "medium" | "high" | "source";
 export type InstanceDemoMode = "mesh" | "instanced";
 export type InstanceDemoCount = 100 | 500 | 1000;
+export type AppMode = "monitor" | "edit";
 
 export interface InstanceDemoState {
   enabled: boolean;
@@ -250,6 +276,11 @@ export interface ModelTransformSettings {
   rotationDeg: VectorSnapshot;
   position: VectorSnapshot;
   scale: VectorSnapshot;
+  flip?: {
+    x: boolean;
+    y: boolean;
+    z: boolean;
+  };
   autoCenter: boolean;
   groundToZero: boolean;
 }
@@ -283,6 +314,10 @@ export interface ModelExternalConfig {
   transform: ModelTransformSettings;
   bindings: ModelBindingSettings;
   lod: ModelLODSettings;
+  materialConfig?: ModelMaterialConfig;
+  faultSimulation?: ModelFaultSimulationConfig;
+  modeConfig?: ModelModeConfig;
+  performance?: ModelPerformanceConfig;
 }
 
 export interface ModelPerformanceStats {

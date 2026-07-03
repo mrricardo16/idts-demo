@@ -5,11 +5,17 @@ const DEG_TO_RAD = Math.PI / 180;
 
 export class ModelTransformApplier {
   apply(root: Object3D, transform: ModelTransformSettings): void {
+    const rotationDeg = {
+      x: transform.rotationDeg.x + (transform.flip?.x ? 180 : 0),
+      y: transform.rotationDeg.y + (transform.flip?.y ? 180 : 0),
+      z: transform.rotationDeg.z + (transform.flip?.z ? 180 : 0),
+    };
+
     root.position.set(0, 0, 0);
     root.rotation.set(
-      transform.rotationDeg.x * DEG_TO_RAD,
-      transform.rotationDeg.y * DEG_TO_RAD,
-      transform.rotationDeg.z * DEG_TO_RAD,
+      rotationDeg.x * DEG_TO_RAD,
+      rotationDeg.y * DEG_TO_RAD,
+      rotationDeg.z * DEG_TO_RAD,
     );
     root.scale.set(transform.scale.x, transform.scale.y, transform.scale.z);
     root.updateMatrixWorld(true);

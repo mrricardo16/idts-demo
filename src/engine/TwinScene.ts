@@ -13,11 +13,13 @@ import { AnimationManager } from "./AnimationManager";
 import { CameraManager } from "./CameraManager";
 import { ChunkLoader } from "./ChunkLoader";
 import { ControlsManager } from "./ControlsManager";
+import { FaultSimulationManager, type FaultSimulationState } from "./FaultSimulationManager";
 import { HitBoxManager } from "./HitBoxManager";
 import { InstancedDemoManager } from "./InstancedDemoManager";
 import { InteractionManager, type InteractionPointerInfo } from "./InteractionManager";
 import { LODModelLoader, type LODLoadedModel } from "./LODModelLoader";
 import { ModelLoadQueue } from "./ModelLoadQueue";
+import { ModelMaterialManager, type ModelMaterialState } from "./ModelMaterialManager";
 import { collectModelObjectTree, logModelObjectTree } from "./ModelStructure";
 import { logModelPerformanceStats } from "./ModelStats";
 import { ModelTransformApplier } from "./ModelTransformApplier";
@@ -65,6 +67,24 @@ interface TwinSceneCallbacks {
   onCameraControlChange: (state: CameraControlDebugState) => void;
   onAreaStateChange: (state: AreaRuntimeState) => void;
   onInstanceDemoChange: (state: InstanceDemoState) => void;
+  onFaultSimulationChange: (state: FaultSimulationState) => void;
+  onModelMaterialChange: (state: ModelMaterialState) => void;
+}
+
+interface ModelWorldBounds {
+  minZ: number;
+  maxZ: number;
+  height: number;
+}
+
+interface MovableWorldZLimits {
+  minAllowedWorldZ: number;
+  maxAllowedWorldZ: number;
+  movableHeight: number;
+  modelMinZ: number;
+  modelMaxZ: number;
+  originToMinZ: number;
+  originToMaxZ: number;
 }
 
 export class TwinScene {
@@ -76,6 +96,8 @@ export class TwinScene {
   private readonly statusManager = new StatusManager();
   private readonly animationManager = new AnimationManager();
   private readonly transformApplier = new ModelTransformApplier();
+  private readonly modelMaterialManager = new ModelMaterialManager();
+  private readonly faultSimulationManager = new FaultSimulationManager();
   private readonly hitBoxManager = new HitBoxManager();
   private readonly instancedDemoManager = new InstancedDemoManager();
   private readonly performanceMonitor = new PerformanceMonitor();
@@ -86,6 +108,8 @@ export class TwinScene {
   private activeDetailRoot?: Group;
   private modelConfig?: ModelExternalConfig;
   private modelNodes: ModelObjectNode[] = [];
+  private modelWorldBounds?: ModelWorldBounds;
+  private movableWorldZLimits?: MovableWorldZLimits;
   private currentDevices: TwinDevice[] = [];
   private movablePart?: Object3D;
   private movableBaseWorldPosition?: Vector3;
@@ -479,8 +503,11 @@ export class TwinScene {
     this.removeMovableHelpers();
     this.movablePart = undefined;
     this.movableBaseWorldPosition = undefined;
+    this.movableWorldZLimits = undefined;
     this.activeTask = undefined;
     this.callbacks.onTaskChange(undefined);
+    this.faultSimulationManager.dispose();
+    this.modelMaterialManager.dispose();
 
     if (this.modelRoot) {
       this.sceneManager.scene.remove(this.modelRoot);
@@ -493,6 +520,7 @@ export class TwinScene {
     this.currentLODLevel = loaded.level;
     this.currentModelUrl = loaded.url;
     this.modelRoot = loaded.root;
+    this.updateModelWorldBounds(loaded.root);
     this.currentAreaConfig = areaConfig;
     this.activeDetailRoot = undefined;
     this.modelConfig = loaded.config;
@@ -536,6 +564,12 @@ export class TwinScene {
     }));
     this.callbacks.onModelTreeChange([]);
     this.callbacks.onSelectModelNode(undefined);
+    this.callbacks.onModelMaterialChange(
+      this.modelMaterialManager.apply(loaded.root, loaded.config),
+    );
+    this.callbacks.onFaultSimulationChange(
+      this.faultSimulationManager.configure(loaded.root, loaded.config),
+    );
     this.updateBindingState(
       this.createUnboundState("小区域 Demo 已加载。请先点击某台设备，再展开该设备内部对象树并手动选择可动部件。"),
     );
@@ -569,8 +603,11 @@ export class TwinScene {
     this.removeMovableHelpers();
     this.movablePart = undefined;
     this.movableBaseWorldPosition = undefined;
+    this.movableWorldZLimits = undefined;
     this.activeTask = undefined;
     this.callbacks.onTaskChange(undefined);
+    this.faultSimulationManager.dispose();
+    this.modelMaterialManager.dispose();
 
     if (this.modelRoot) {
       this.sceneManager.scene.remove(this.modelRoot);
@@ -584,6 +621,7 @@ export class TwinScene {
     this.currentModelUrl = loaded.url;
     this.modelRoot = loaded.root;
     this.activeDetailRoot = loaded.root;
+    this.updateModelWorldBounds(loaded.root);
     this.modelConfig = loaded.config;
     this.currentDevices = this.statusManager.getDevices();
     this.callbacks.onDevicesChange(this.currentDevices);
@@ -604,6 +642,9 @@ export class TwinScene {
     this.sceneManager.scene.add(loaded.root);
     this.adaptCameraControlsToModel(loaded.root);
     this.applyMockStatusColors();
+    this.callbacks.onModelMaterialChange(
+      this.modelMaterialManager.apply(loaded.root, loaded.config),
+    );
 
     const hitBox = this.hitBoxManager.createHitBox(loaded.root, loaded.config);
     if (hitBox) {
@@ -628,12 +669,20 @@ export class TwinScene {
     logModelObjectTree(modelTree);
     this.callbacks.onModelTreeChange(modelTree);
     this.callbacks.onSelectModelNode(restoredSelectedNode);
+    this.callbacks.onFaultSimulationChange(
+      this.faultSimulationManager.configure(loaded.root, loaded.config),
+    );
     this.callbacks.onBindingChange(bindingState);
     this.callbacks.onModelConfigChange(loaded.config);
     this.callbacks.onPerformanceChange(this.getPerformanceStats());
     this.callbacks.onCameraControlChange(this.controlsManager.getDebugState());
     this.updateSelectionHelper(
       restoredSelectedNode ? loaded.root.getObjectByProperty("uuid", restoredSelectedNode.uuid) : undefined,
+    );
+    this.callbacks.onFaultSimulationChange(
+      this.faultSimulationManager.refreshSelection(
+        restoredSelectedNode ? loaded.root.getObjectByProperty("uuid", restoredSelectedNode.uuid) : undefined,
+      ),
     );
 
     this.interactionManager = new InteractionManager(
@@ -648,6 +697,7 @@ export class TwinScene {
     this.loadedUseFallback = false;
     this.modelRoot = undefined;
     this.activeDetailRoot = undefined;
+    this.modelWorldBounds = undefined;
     this.modelConfig = loaded.config;
     this.currentLODLevel = loaded.level;
     this.currentModelUrl = undefined;
@@ -655,10 +705,15 @@ export class TwinScene {
     this.modelNodes = [];
     this.movablePart = undefined;
     this.movableBaseWorldPosition = undefined;
+    this.movableWorldZLimits = undefined;
     this.activeTask = undefined;
     this.callbacks.onTaskChange(undefined);
+    this.faultSimulationManager.dispose();
+    this.modelMaterialManager.dispose();
     this.callbacks.onModelTreeChange([]);
     this.callbacks.onSelectModelNode(undefined);
+    this.callbacks.onFaultSimulationChange(this.faultSimulationManager.getState());
+    this.callbacks.onModelMaterialChange(this.modelMaterialManager.getState());
     this.callbacks.onAreaStateChange(this.updateAreaState({
       sceneMode: this.sceneMode,
       areaId: this.sceneMode === "area" ? smallAreaDemoConfig.areaId : undefined,
@@ -680,14 +735,38 @@ export class TwinScene {
       return undefined;
     }
 
-    this.modelConfig = {
+    return this.applyModelConfig({
       ...this.modelConfig,
       transform,
-    };
-    this.transformApplier.apply(this.modelRoot, transform);
+    });
+  }
+
+  applyModelConfig(config: ModelExternalConfig): ModelExternalConfig | undefined {
+    if (!this.modelRoot || !this.modelConfig) {
+      return undefined;
+    }
+
+    const wasFaultEnabled = this.faultSimulationManager.getState().enabled;
+    if (wasFaultEnabled) {
+      this.faultSimulationManager.disable();
+    }
+
+    this.modelConfig = config;
+    this.transformApplier.apply(this.modelRoot, config.transform);
     this.adaptCameraControlsToModel(this.modelRoot);
+    this.updateModelWorldBounds(this.modelRoot);
+    if (this.movablePart && this.bindingState.currentMovableObjectUuid) {
+      this.movableWorldZLimits = this.createMovableWorldZLimits(this.movablePart);
+    }
     this.refreshHitBox();
     this.refreshModelTree();
+    this.callbacks.onModelMaterialChange(this.modelMaterialManager.apply(this.modelRoot, this.modelConfig));
+    this.callbacks.onFaultSimulationChange(
+      this.faultSimulationManager.configure(this.modelRoot, this.modelConfig),
+    );
+    if (wasFaultEnabled) {
+      this.callbacks.onFaultSimulationChange(this.faultSimulationManager.enable());
+    }
     this.updateSelectionHelper(
       this.selectedModelUuid
         ? this.modelRoot.getObjectByProperty("uuid", this.selectedModelUuid)
@@ -735,9 +814,11 @@ export class TwinScene {
     this.selectedMeshName = deviceId;
     this.removeSelectionHelper();
     this.updateSelectionHelper(clickedObject ?? deviceRoot);
+    this.callbacks.onFaultSimulationChange(this.faultSimulationManager.refreshSelection(clickedObject ?? deviceRoot));
     this.removeMovableHelpers();
     this.movablePart = undefined;
     this.movableBaseWorldPosition = undefined;
+    this.movableWorldZLimits = undefined;
     this.callbacks.onDevicesChange(this.currentDevices);
     this.callbacks.onSelectDevice(device);
     this.callbacks.onModelTreeChange(this.modelNodes);
@@ -778,7 +859,24 @@ export class TwinScene {
     }
     this.callbacks.onSelectModelNode(node);
     this.updateSelectionHelper(object);
+    this.callbacks.onFaultSimulationChange(this.faultSimulationManager.refreshSelection(object));
     this.requestRender();
+  }
+
+  getModelObjectChildren(uuid: string): ModelObjectNode[] | undefined {
+    const object = this.findSceneObjectByUuid(uuid);
+    if (!object) {
+      return undefined;
+    }
+
+    return object.children
+      .map((child) => this.findNodeByUuid(child.uuid))
+      .filter((node): node is ModelObjectNode => Boolean(node));
+  }
+
+  getModelObjectParent(uuid: string): ModelObjectNode | undefined {
+    const object = this.findSceneObjectByUuid(uuid);
+    return object?.parent ? this.findNodeByUuid(object.parent.uuid) : undefined;
   }
 
   focusModelObject(uuid: string): void {
@@ -840,14 +938,29 @@ export class TwinScene {
   clearMovablePart(): LifterBindingState {
     this.movablePart = undefined;
     this.movableBaseWorldPosition = undefined;
+    this.movableWorldZLimits = undefined;
     this.removeMovableHelpers();
     return this.updateBindingState(
       this.createUnboundState("当前真实 GLB 未找到 lifter-platform。请在 3D 模型或对象树中手动选择疑似箱体 / 轿厢 / 载货台对象，并点击设为可动部件。"),
     );
   }
 
+  enableFaultSimulation(): FaultSimulationState {
+    const state = this.faultSimulationManager.enable();
+    this.callbacks.onFaultSimulationChange(state);
+    this.requestRender();
+    return state;
+  }
+
+  disableFaultSimulation(): FaultSimulationState {
+    const state = this.faultSimulationManager.disable();
+    this.callbacks.onFaultSimulationChange(state);
+    this.requestRender();
+    return state;
+  }
+
   moveCurrentMovableBy(deltaZ: number): LifterBindingState | undefined {
-    if (!this.movablePart) {
+    if (!this.movablePart || !this.bindingState.canMove) {
       return undefined;
     }
 
@@ -858,7 +971,7 @@ export class TwinScene {
   }
 
   resetMovablePartPosition(): LifterBindingState | undefined {
-    if (!this.movablePart || !this.movableBaseWorldPosition) {
+    if (!this.movablePart || !this.movableBaseWorldPosition || !this.bindingState.canMove) {
       return undefined;
     }
 
@@ -869,14 +982,21 @@ export class TwinScene {
   dispatchLifterTask(request: LifterTaskRequest): LifterTask {
     const task = this.createTask(request);
 
-    if (!this.movablePart || !this.modelRoot) {
+    const limits = this.getMovableWorldZLimits();
+    const canMoveSafely = this.bindingState.canMove && this.hasValidMovableWorldZLimits(limits);
+
+    if (!this.movablePart || !this.modelRoot || !canMoveSafely) {
       const failedTask: LifterTask = {
         ...task,
         status: "failed",
         finishTime: this.createTime(),
-        message: this.modelRoot
-          ? "当前真实 GLB 未找到 lifter-platform。请在 3D 模型或对象树中手动选择疑似箱体 / 轿厢 / 载货台对象，并点击设为可动部件。"
-          : "未加载真实模型，无法执行提升机移动任务。",
+        message: !this.modelRoot
+          ? "未加载真实模型，无法执行提升机移动任务。"
+          : !this.movablePart
+            ? "请先选择并设置可动部件。"
+            : !this.modelWorldBounds
+              ? "未获取整机模型边界，无法执行安全移动。"
+              : this.bindingState.message,
       };
       this.activeTask = failedTask;
       this.callbacks.onTaskChange(failedTask);
@@ -887,10 +1007,15 @@ export class TwinScene {
       lifterBindingConfig.maxZ,
       Math.max(lifterBindingConfig.minZ, request.targetZ),
     );
-    const baseWorldPosition = this.movableBaseWorldPosition ?? this.getObjectWorldPosition(this.movablePart);
-    const targetWorldPosition = baseWorldPosition.clone();
-    targetWorldPosition.z = baseWorldPosition.z + targetOffsetZ;
     const currentWorldPosition = this.getObjectWorldPosition(this.movablePart);
+    const requestedTargetWorldPosition = currentWorldPosition.clone();
+    requestedTargetWorldPosition.z = limits.modelMinZ + targetOffsetZ + limits.originToMinZ;
+    const clampedTarget = this.clampTargetWorldPosition(requestedTargetWorldPosition);
+    const targetWorldPosition = clampedTarget.targetWorldPosition;
+    const taskMessage = this.createSafetyMoveMessage(
+      `任务执行中：正在移动 ${this.bindingState.currentMovableObjectName}`,
+      clampedTarget.targetClamped,
+    );
     const runningTask: LifterTask = {
       ...task,
       movableObjectName: this.bindingState.currentMovableObjectName,
@@ -898,9 +1023,18 @@ export class TwinScene {
       targetZ: targetOffsetZ,
       status: "running",
       currentZ: currentWorldPosition.z,
+      startWorldZ: currentWorldPosition.z,
       currentWorldZ: currentWorldPosition.z,
-      targetWorldZ: targetWorldPosition.z,
-      message: `任务执行中：正在移动 ${this.bindingState.currentMovableObjectName}`,
+      targetWorldZ: requestedTargetWorldPosition.z,
+      clampedTargetWorldZ: targetWorldPosition.z,
+      modelMinZ: limits.modelMinZ,
+      modelMaxZ: limits.modelMaxZ,
+      movableHeight: limits.movableHeight,
+      minAllowedWorldZ: limits.minAllowedWorldZ,
+      maxAllowedWorldZ: limits.maxAllowedWorldZ,
+      targetClamped: clampedTarget.targetClamped,
+      moveBasis: "current world position",
+      message: taskMessage,
     };
 
     this.activeTask = runningTask;
@@ -912,6 +1046,8 @@ export class TwinScene {
       object: this.movablePart,
       targetWorldPosition,
       unitsPerSecond: taskSpeedUnitsPerSecond[request.speed],
+      minWorldZ: limits.minAllowedWorldZ,
+      maxWorldZ: limits.maxAllowedWorldZ,
       onUpdate: (currentWorld) => {
         if (!this.activeTask) {
           return;
@@ -921,8 +1057,13 @@ export class TwinScene {
           ...this.activeTask,
           currentZ: currentWorld.z,
           currentWorldZ: currentWorld.z,
+          clampedTargetWorldZ: targetWorldPosition.z,
         };
-        this.updateBindingWorldState(currentWorld);
+        this.updateBindingWorldState(currentWorld, targetWorldPosition, taskMessage, {
+          startWorldZ: currentWorldPosition.z,
+          requestedTargetWorldZ: requestedTargetWorldPosition.z,
+          targetClamped: clampedTarget.targetClamped,
+        });
         this.updateMovableHelper();
         this.callbacks.onTaskChange(this.activeTask);
       },
@@ -937,12 +1078,16 @@ export class TwinScene {
           finishTime: this.createTime(),
           currentZ: targetWorldPosition.z,
           currentWorldZ: targetWorldPosition.z,
-          targetWorldZ: targetWorldPosition.z,
-          message: "已到达目标位置",
+          clampedTargetWorldZ: targetWorldPosition.z,
+          message: this.createSafetyMoveMessage("已到达目标位置", clampedTarget.targetClamped),
         };
         this.callbacks.onTaskChange(this.activeTask);
         this.updateDeviceStatus(request.deviceId, "arrived", false);
-        this.updateBindingWorldState(targetWorldPosition);
+        this.updateBindingWorldState(targetWorldPosition, targetWorldPosition, this.activeTask.message, {
+          startWorldZ: currentWorldPosition.z,
+          requestedTargetWorldZ: requestedTargetWorldPosition.z,
+          targetClamped: clampedTarget.targetClamped,
+        });
         this.updateMovableHelper();
         this.clearMoveHelperLine();
       },
@@ -962,6 +1107,8 @@ export class TwinScene {
     window.clearInterval(this.statusTimerId);
     window.clearInterval(this.performanceTimerId);
     this.interactionManager?.clear();
+    this.faultSimulationManager.dispose();
+    this.modelMaterialManager.dispose();
     this.hitBoxManager.clear();
     this.removeSelectionHelper();
     this.removeMovableHelpers();
@@ -1043,6 +1190,7 @@ export class TwinScene {
     );
     this.callbacks.onSelectModelNode(node);
     this.updateSelectionHelper(object);
+    this.callbacks.onFaultSimulationChange(this.faultSimulationManager.refreshSelection(object));
     this.requestRender();
   };
 
@@ -1056,6 +1204,7 @@ export class TwinScene {
     this.selectedMeshName = String(object.userData.areaDeviceId || object.userData.meshName || object.name || "");
     this.callbacks.onSelectModelNode(node);
     this.updateSelectionHelper(object);
+    this.callbacks.onFaultSimulationChange(this.faultSimulationManager.refreshSelection(object));
     this.requestRender();
   }
 
@@ -1192,9 +1341,23 @@ export class TwinScene {
   ): LifterBindingState {
     this.movablePart = object;
     this.movableBaseWorldPosition = this.getObjectWorldPosition(object);
+    this.movableWorldZLimits = this.createMovableWorldZLimits(object);
     const worldPosition = this.getObjectWorldPosition(object);
     const box = new Box3().setFromObject(object);
     const boundingBox = box.isEmpty() ? null : this.findNodeByUuid(node.uuid)?.boundingBox ?? null;
+    const hasModelBounds = Boolean(this.modelWorldBounds);
+    const hasValidLimits = this.hasValidMovableWorldZLimits(this.movableWorldZLimits);
+    const movableExceedsModel =
+      Boolean(this.movableWorldZLimits && this.modelWorldBounds) &&
+      this.movableWorldZLimits!.movableHeight > this.modelWorldBounds!.height;
+    const canMoveSafely = hasModelBounds && hasValidLimits && !movableExceedsModel;
+    const safetyMessage = !hasModelBounds
+      ? "未获取整机模型边界，无法执行安全移动。"
+      : movableExceedsModel
+        ? "可动部件高度超过整机模型高度，无法安全移动。"
+        : !hasValidLimits
+          ? "可动部件安全移动范围无效，无法执行安全移动。"
+          : message;
     this.updateMovableHelper();
     return this.updateBindingState({
       deviceId: lifterBindingConfig.deviceId,
@@ -1211,14 +1374,23 @@ export class TwinScene {
       worldPosition: this.toVectorSnapshot(worldPosition),
       baseWorldPosition: this.toVectorSnapshot(this.movableBaseWorldPosition),
       baseWorldZ: this.movableBaseWorldPosition.z,
+      startWorldZ: worldPosition.z,
       currentWorldZ: worldPosition.z,
+      clampedTargetWorldZ: worldPosition.z,
+      modelMinZ: this.movableWorldZLimits?.modelMinZ,
+      modelMaxZ: this.movableWorldZLimits?.modelMaxZ,
+      movableHeight: this.movableWorldZLimits?.movableHeight,
+      minAllowedWorldZ: this.movableWorldZLimits?.minAllowedWorldZ,
+      maxAllowedWorldZ: this.movableWorldZLimits?.maxAllowedWorldZ,
+      targetClamped: false,
+      moveBasis: "current world position",
       moveMode: "worldZ",
       boundingBox,
       moveAxis: this.getConfiguredMoveAxis(),
-      canMove: true,
+      canMove: canMoveSafely,
       bindingSource,
-      message,
-      warning,
+      message: safetyMessage,
+      warning: canMoveSafely ? warning : safetyMessage,
     });
   }
 
@@ -1257,16 +1429,36 @@ export class TwinScene {
     const selectedNode = this.selectedModelUuid ? this.findNodeByUuid(this.selectedModelUuid) : undefined;
     this.callbacks.onSelectModelNode(selectedNode);
 
-    if (this.movablePart && this.bindingState.canMove) {
+    if (this.movablePart && this.bindingState.currentMovableObjectUuid) {
       const movableNode = this.findNodeByUuid(this.movablePart.uuid);
       const worldPosition = this.getObjectWorldPosition(this.movablePart);
+      const limits = this.getMovableWorldZLimits();
+      const movableExceedsModel = limits && this.modelWorldBounds
+        ? limits.movableHeight > this.modelWorldBounds.height
+        : false;
+      const canMoveSafely = this.hasValidMovableWorldZLimits(limits) && !movableExceedsModel;
+      const safetyMessage = !this.modelWorldBounds
+        ? "未获取整机模型边界，无法执行安全移动。"
+        : movableExceedsModel
+          ? "可动部件高度超过整机模型高度，无法安全移动。"
+          : !canMoveSafely
+            ? "可动部件安全移动范围无效，无法执行安全移动。"
+            : this.bindingState.message;
       this.updateBindingState({
         ...this.bindingState,
         currentZ: worldPosition.z,
         localPosition: this.toVectorSnapshot(this.movablePart.position),
         worldPosition: this.toVectorSnapshot(worldPosition),
         currentWorldZ: worldPosition.z,
+        modelMinZ: limits?.modelMinZ ?? this.bindingState.modelMinZ,
+        modelMaxZ: limits?.modelMaxZ ?? this.bindingState.modelMaxZ,
+        movableHeight: limits?.movableHeight ?? this.bindingState.movableHeight,
+        minAllowedWorldZ: limits?.minAllowedWorldZ ?? this.bindingState.minAllowedWorldZ,
+        maxAllowedWorldZ: limits?.maxAllowedWorldZ ?? this.bindingState.maxAllowedWorldZ,
         boundingBox: movableNode?.boundingBox ?? this.bindingState.boundingBox,
+        canMove: canMoveSafely,
+        message: safetyMessage,
+        warning: canMoveSafely ? this.bindingState.warning : safetyMessage,
       });
     }
   }
@@ -1288,6 +1480,97 @@ export class TwinScene {
     return object.getWorldPosition(new Vector3());
   }
 
+  private updateModelWorldBounds(root?: Object3D): void {
+    if (!root) {
+      this.modelWorldBounds = undefined;
+      return;
+    }
+
+    root.updateMatrixWorld(true);
+    const box = new Box3().setFromObject(root);
+    if (box.isEmpty()) {
+      this.modelWorldBounds = undefined;
+      return;
+    }
+
+    this.modelWorldBounds = {
+      minZ: box.min.z,
+      maxZ: box.max.z,
+      height: box.max.z - box.min.z,
+    };
+  }
+
+  private createMovableWorldZLimits(object: Object3D): MovableWorldZLimits | undefined {
+    if (!this.modelWorldBounds) {
+      return undefined;
+    }
+
+    object.updateMatrixWorld(true);
+    const box = new Box3().setFromObject(object);
+    const worldPosition = this.getObjectWorldPosition(object);
+    const margin = 0.05;
+    const movableHeight = box.isEmpty() ? 0 : box.max.z - box.min.z;
+    const originToMinZ = box.isEmpty() ? margin : Math.max(margin, worldPosition.z - box.min.z);
+    const originToMaxZ = box.isEmpty() ? margin : Math.max(margin, box.max.z - worldPosition.z);
+
+    return {
+      minAllowedWorldZ: this.modelWorldBounds.minZ + originToMinZ,
+      maxAllowedWorldZ: this.modelWorldBounds.maxZ - originToMaxZ,
+      movableHeight,
+      modelMinZ: this.modelWorldBounds.minZ,
+      modelMaxZ: this.modelWorldBounds.maxZ,
+      originToMinZ,
+      originToMaxZ,
+    };
+  }
+
+  private hasValidMovableWorldZLimits(limits?: MovableWorldZLimits): limits is MovableWorldZLimits {
+    return Boolean(
+      limits &&
+        Number.isFinite(limits.minAllowedWorldZ) &&
+        Number.isFinite(limits.maxAllowedWorldZ) &&
+        limits.minAllowedWorldZ <= limits.maxAllowedWorldZ,
+    );
+  }
+
+  private getMovableWorldZLimits(): MovableWorldZLimits | undefined {
+    if (!this.movablePart) {
+      return undefined;
+    }
+
+    this.movableWorldZLimits = this.createMovableWorldZLimits(this.movablePart);
+    return this.movableWorldZLimits;
+  }
+
+  private clampTargetWorldPosition(targetWorldPosition: Vector3): {
+    targetWorldPosition: Vector3;
+    targetClamped: boolean;
+    limits?: MovableWorldZLimits;
+  } {
+    const limits = this.getMovableWorldZLimits();
+    if (!this.hasValidMovableWorldZLimits(limits)) {
+      return { targetWorldPosition: targetWorldPosition.clone(), targetClamped: false, limits };
+    }
+
+    const clampedTargetWorldPosition = targetWorldPosition.clone();
+    const clampedZ = MathUtils.clamp(
+      targetWorldPosition.z,
+      limits.minAllowedWorldZ,
+      limits.maxAllowedWorldZ,
+    );
+    clampedTargetWorldPosition.z = clampedZ;
+
+    return {
+      targetWorldPosition: clampedTargetWorldPosition,
+      targetClamped: clampedZ !== targetWorldPosition.z,
+      limits,
+    };
+  }
+
+  private createSafetyMoveMessage(message: string, targetClamped: boolean): string {
+    return targetClamped ? `${message}。目标高度超出模型高度范围，已限制到允许范围内。` : message;
+  }
+
   private toVectorSnapshot(vector: Vector3): { x: number; y: number; z: number } {
     return {
       x: vector.x,
@@ -1306,6 +1589,7 @@ export class TwinScene {
 
   private findSceneObjectByUuid(uuid: string): Object3D | undefined {
     return (
+      this.activeDetailRoot?.getObjectByProperty("uuid", uuid) ??
       this.modelRoot?.getObjectByProperty("uuid", uuid) ??
       this.hitBoxManager.getHitBoxes().find((hitBox) => hitBox.uuid === uuid)
     );
@@ -1436,6 +1720,7 @@ export class TwinScene {
 
     if (this.loadedUseFallback || debugConfig.enableMockStatusColor) {
       this.statusManager.applyStatusColors(this.modelRoot);
+      this.callbacks.onFaultSimulationChange(this.faultSimulationManager.reapply());
     }
   }
 
@@ -1448,29 +1733,56 @@ export class TwinScene {
       return;
     }
 
-    this.updateMoveHelperLine(targetWorldPosition);
     const currentWorldPosition = this.getObjectWorldPosition(this.movablePart);
+    const startWorldZ = currentWorldPosition.z;
+    const requestedTargetWorldPosition = targetWorldPosition.clone();
+    const clampedTarget = this.clampTargetWorldPosition(requestedTargetWorldPosition);
+    const clampedTargetWorldPosition = clampedTarget.targetWorldPosition;
+    const limits = clampedTarget.limits;
+    const safeRunningMessage = this.createSafetyMoveMessage(runningMessage, clampedTarget.targetClamped);
+    const safeCompleteMessage = this.createSafetyMoveMessage(completeMessage, clampedTarget.targetClamped);
+
+    this.updateMoveHelperLine(clampedTargetWorldPosition);
     this.updateBindingState({
       ...this.bindingState,
       currentZ: currentWorldPosition.z,
       localPosition: this.toVectorSnapshot(this.movablePart.position),
       worldPosition: this.toVectorSnapshot(currentWorldPosition),
+      startWorldZ: currentWorldPosition.z,
       currentWorldZ: currentWorldPosition.z,
-      targetWorldPosition: this.toVectorSnapshot(targetWorldPosition),
-      targetWorldZ: targetWorldPosition.z,
+      targetWorldPosition: this.toVectorSnapshot(clampedTargetWorldPosition),
+      targetWorldZ: requestedTargetWorldPosition.z,
+      clampedTargetWorldZ: clampedTargetWorldPosition.z,
+      modelMinZ: limits?.modelMinZ ?? this.bindingState.modelMinZ,
+      modelMaxZ: limits?.modelMaxZ ?? this.bindingState.modelMaxZ,
+      movableHeight: limits?.movableHeight ?? this.bindingState.movableHeight,
+      minAllowedWorldZ: limits?.minAllowedWorldZ ?? this.bindingState.minAllowedWorldZ,
+      maxAllowedWorldZ: limits?.maxAllowedWorldZ ?? this.bindingState.maxAllowedWorldZ,
+      targetClamped: clampedTarget.targetClamped,
+      moveBasis: "current world position",
       moveMode: "worldZ",
-      message: runningMessage,
+      message: safeRunningMessage,
     });
     this.animationManager.moveObjectToWorldPosition({
       object: this.movablePart,
-      targetWorldPosition,
+      targetWorldPosition: clampedTargetWorldPosition,
       unitsPerSecond: taskSpeedUnitsPerSecond.normal,
+      minWorldZ: limits?.minAllowedWorldZ,
+      maxWorldZ: limits?.maxAllowedWorldZ,
       onUpdate: (currentWorldPosition) => {
-        this.updateBindingWorldState(currentWorldPosition, targetWorldPosition, runningMessage);
+        this.updateBindingWorldState(currentWorldPosition, clampedTargetWorldPosition, safeRunningMessage, {
+          startWorldZ,
+          requestedTargetWorldZ: requestedTargetWorldPosition.z,
+          targetClamped: clampedTarget.targetClamped,
+        });
         this.updateMovableHelper();
       },
       onComplete: () => {
-        this.updateBindingWorldState(targetWorldPosition, targetWorldPosition, completeMessage);
+        this.updateBindingWorldState(clampedTargetWorldPosition, clampedTargetWorldPosition, safeCompleteMessage, {
+          startWorldZ,
+          requestedTargetWorldZ: requestedTargetWorldPosition.z,
+          targetClamped: clampedTarget.targetClamped,
+        });
         this.updateMovableHelper();
         this.clearMoveHelperLine();
       },
@@ -1482,23 +1794,38 @@ export class TwinScene {
     currentWorldPosition: Vector3,
     targetWorldPosition = this.vectorFromSnapshot(this.bindingState.targetWorldPosition),
     message = this.bindingState.message,
+    moveContext: {
+      startWorldZ?: number;
+      requestedTargetWorldZ?: number;
+      targetClamped?: boolean;
+    } = {},
   ): void {
     if (!this.movablePart) {
       return;
     }
 
+    const limits = this.getMovableWorldZLimits();
     this.updateBindingState({
       ...this.bindingState,
       currentZ: currentWorldPosition.z,
       localPosition: this.toVectorSnapshot(this.movablePart.position),
       worldPosition: this.toVectorSnapshot(currentWorldPosition),
+      startWorldZ: moveContext.startWorldZ ?? this.bindingState.startWorldZ,
       currentWorldZ: currentWorldPosition.z,
       targetWorldPosition: targetWorldPosition ? this.toVectorSnapshot(targetWorldPosition) : this.bindingState.targetWorldPosition,
-      targetWorldZ: targetWorldPosition?.z ?? this.bindingState.targetWorldZ,
+      targetWorldZ: moveContext.requestedTargetWorldZ ?? targetWorldPosition?.z ?? this.bindingState.targetWorldZ,
+      clampedTargetWorldZ: targetWorldPosition?.z ?? this.bindingState.clampedTargetWorldZ,
       baseWorldPosition: this.movableBaseWorldPosition
         ? this.toVectorSnapshot(this.movableBaseWorldPosition)
         : this.bindingState.baseWorldPosition,
       baseWorldZ: this.movableBaseWorldPosition?.z ?? this.bindingState.baseWorldZ,
+      modelMinZ: limits?.modelMinZ ?? this.bindingState.modelMinZ,
+      modelMaxZ: limits?.modelMaxZ ?? this.bindingState.modelMaxZ,
+      movableHeight: limits?.movableHeight ?? this.bindingState.movableHeight,
+      minAllowedWorldZ: limits?.minAllowedWorldZ ?? this.bindingState.minAllowedWorldZ,
+      maxAllowedWorldZ: limits?.maxAllowedWorldZ ?? this.bindingState.maxAllowedWorldZ,
+      targetClamped: moveContext.targetClamped ?? this.bindingState.targetClamped,
+      moveBasis: "current world position",
       moveMode: "worldZ",
       message,
     });
@@ -1515,7 +1842,7 @@ export class TwinScene {
       return;
     }
 
-    this.selectedHelper = new Box3Helper(box, 0x69f0ff);
+    this.selectedHelper = new Box3Helper(box, this.modelConfig?.materialConfig?.selectionColor ?? 0x69f0ff);
     this.sceneManager.scene.add(this.selectedHelper);
   }
 
@@ -1530,7 +1857,7 @@ export class TwinScene {
       return;
     }
 
-    this.movableHelper = new Box3Helper(box, 0x21c17a);
+    this.movableHelper = new Box3Helper(box, this.modelConfig?.materialConfig?.movablePartColor ?? 0x21c17a);
     this.sceneManager.scene.add(this.movableHelper);
   }
 

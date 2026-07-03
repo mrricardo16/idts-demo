@@ -72,6 +72,7 @@ export class FreeLookControls {
     this.domElement.addEventListener("pointermove", this.handlePointerMove);
     this.domElement.addEventListener("pointerup", this.handlePointerUp);
     this.domElement.addEventListener("pointercancel", this.handlePointerCancel);
+    this.domElement.addEventListener("pointerleave", this.handlePointerLeave);
     this.domElement.addEventListener("wheel", this.handleWheel, { passive: false });
     this.domElement.addEventListener("contextmenu", this.handleContextMenu);
     window.addEventListener("keydown", this.handleKeyDown);
@@ -152,11 +153,13 @@ export class FreeLookControls {
     this.domElement.removeEventListener("pointermove", this.handlePointerMove);
     this.domElement.removeEventListener("pointerup", this.handlePointerUp);
     this.domElement.removeEventListener("pointercancel", this.handlePointerCancel);
+    this.domElement.removeEventListener("pointerleave", this.handlePointerLeave);
     this.domElement.removeEventListener("wheel", this.handleWheel);
     this.domElement.removeEventListener("contextmenu", this.handleContextMenu);
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("blur", this.handleWindowBlur);
+    this.clearPointerState();
   }
 
   needsContinuousRender(): boolean {
@@ -185,10 +188,19 @@ export class FreeLookControls {
       lastY: event.clientY,
       isLooking: false,
     };
+    try {
+      this.domElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Ignore browsers or pointer states that cannot be captured.
+    }
   };
 
   private readonly handlePointerMove = (event: PointerEvent): void => {
     if (!this.pointerState || this.pointerState.pointerId !== event.pointerId) {
+      return;
+    }
+    if ((event.buttons & 1) !== 1) {
+      this.clearPointerState(event.pointerId);
       return;
     }
 
@@ -224,15 +236,15 @@ export class FreeLookControls {
   };
 
   private readonly handlePointerUp = (event: PointerEvent): void => {
-    if (this.pointerState?.pointerId === event.pointerId) {
-      this.pointerState = undefined;
-    }
+    this.clearPointerState(event.pointerId);
   };
 
   private readonly handlePointerCancel = (event: PointerEvent): void => {
-    if (this.pointerState?.pointerId === event.pointerId) {
-      this.pointerState = undefined;
-    }
+    this.clearPointerState(event.pointerId);
+  };
+
+  private readonly handlePointerLeave = (event: PointerEvent): void => {
+    this.clearPointerState(event.pointerId);
   };
 
   private readonly handleWheel = (event: WheelEvent): void => {
@@ -285,8 +297,25 @@ export class FreeLookControls {
 
   private readonly handleWindowBlur = (): void => {
     this.pressedKeys.clear();
+    this.clearPointerState();
     this.onChange();
   };
+
+  private clearPointerState(pointerId?: number): void {
+    if (!this.pointerState || (pointerId !== undefined && this.pointerState.pointerId !== pointerId)) {
+      return;
+    }
+
+    const capturedPointerId = this.pointerState.pointerId;
+    this.pointerState = undefined;
+    try {
+      if (this.domElement.hasPointerCapture?.(capturedPointerId)) {
+        this.domElement.releasePointerCapture(capturedPointerId);
+      }
+    } catch {
+      // Ignore pointer capture release races.
+    }
+  }
 
   private createBoundingSphere(object: Object3D): Sphere | undefined {
     const box = new Box3().setFromObject(object);

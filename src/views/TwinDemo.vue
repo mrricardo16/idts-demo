@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { lifterBindingConfig, lifterTargetPositions } from "../config/lifterBindingConfig";
+import type { FaultSimulationState } from "../engine/FaultSimulationManager";
+import { modelConfigLocalStorageKey } from "../engine/LODModelLoader";
+import type { ModelMaterialState } from "../engine/ModelMaterialManager";
 import { TwinScene } from "../engine/TwinScene";
 import { statusClassNames, statusLabels } from "../mock/deviceStatus";
 import type {
   AreaRuntimeState,
+  AppMode,
   DeviceStatus,
   CameraControlDebugState,
   InstanceDemoCount,
@@ -32,6 +36,8 @@ type ObjectFilterMode =
   | "mesh"
   | "group";
 
+type ObjectListMode = "all" | "search" | "children";
+
 const viewportRef = ref<HTMLElement | null>(null);
 const twinScene = ref<TwinScene | null>(null);
 const devices = ref<TwinDevice[]>([]);
@@ -41,10 +47,18 @@ const modelNodes = ref<ModelObjectNode[]>([]);
 const selectedObjectUuid = ref("");
 const objectSearchQuery = ref("");
 const objectFilterMode = ref<ObjectFilterMode>("all");
+const objectListMode = ref<ObjectListMode>("all");
+const objectListMessage = ref("");
+const childrenScopeNodes = ref<ModelObjectNode[]>([]);
+const currentListParentName = ref("");
+const currentListParentUuid = ref("");
 const latestTask = ref<LifterTask | undefined>();
 const taskDeviceId = ref<string>(lifterBindingConfig.deviceId);
 const selectedTargetCode = ref(lifterTargetPositions[0]?.code ?? "F1");
 const selectedSpeed = ref<TaskSpeed>("normal");
+const appMode = ref<AppMode>("monitor");
+const hasInitializedAppMode = ref(false);
+const editBaselineConfig = ref<ModelExternalConfig | undefined>();
 const bindingState = ref<LifterBindingState>({
   deviceId: lifterBindingConfig.deviceId,
   movablePartName: lifterBindingConfig.movablePartName,
@@ -58,16 +72,42 @@ const calibrationForm = ref({
   rotationX: 180,
   rotationY: 0,
   rotationZ: 0,
-  scale: 1,
+  scaleX: 1,
+  scaleY: 1,
+  scaleZ: 1,
   positionX: 0,
   positionY: 0,
   positionZ: 0,
+  flipX: false,
+  flipY: false,
+  flipZ: false,
   autoCenter: true,
   groundToZero: true,
+  preserveOriginalMaterial: true,
+  defaultColor: "#2f3437",
+  defaultOpacity: 1,
 });
 const calibrationCopyMessage = ref("");
+const editModeMessage = ref("");
 const performanceStats = ref<ModelPerformanceStats | undefined>();
 const cameraControlState = ref<CameraControlDebugState | undefined>();
+const faultSimulationState = ref<FaultSimulationState>({
+  enabled: false,
+  deviceId: "",
+  faultColor: "#ff3333",
+  activeFaults: [],
+  message: "未配置异常模拟。",
+});
+const modelMaterialState = ref<ModelMaterialState>({
+  preserveOriginalMaterial: true,
+  defaultColor: undefined,
+  defaultOpacity: undefined,
+  faultColor: "#ff3333",
+  selectionColor: "#69f0ff",
+  movablePartColor: "#21c17a",
+  objectColorCount: 0,
+  appliedObjectColorCount: 0,
+});
 const loadState = ref<ModelLoadState>({
   isLoading: true,
   useFallback: false,
@@ -123,8 +163,9 @@ const selectedTarget = computed(
     lifterTargetPositions[0],
 );
 const isTaskRunning = computed(() => latestTask.value?.status === "running");
-const canDispatchTask = computed(() => bindingState.value.canMove && !isTaskRunning.value);
-const canTestMove = computed(() => bindingState.value.canMove && !isTaskRunning.value);
+const isEditMode = computed(() => appMode.value === "edit");
+const canDispatchTask = computed(() => appMode.value === "monitor" && bindingState.value.canMove && !isTaskRunning.value);
+const canTestMove = computed(() => appMode.value === "monitor" && bindingState.value.canMove && !isTaskRunning.value);
 const hasLoadedModel = computed(() => Boolean(performanceStats.value));
 const currentDisplayLevel = computed(() => loadState.value.currentLevel ?? performanceStats.value?.currentLevel ?? "-");
 const selectedModelNode = computed(() =>
@@ -144,15 +185,29 @@ const selectedChildNodes = computed(() => {
 
   return modelNodes.value.filter((node) => node.parentUuid === selectedModelNode.value?.uuid);
 });
+const objectListModeLabel = computed(() => {
+  if (objectListMode.value === "children") {
+    return "children";
+  }
+  if (objectSearchQuery.value.trim()) {
+    return "search";
+  }
+  return objectFilterMode.value === "all" ? "all" : objectFilterMode.value;
+});
 const filteredModelNodes = computed(() => {
   const keyword = objectSearchQuery.value.trim().toLowerCase();
-  let nodes = modelNodes.value;
+  let nodes = objectListMode.value === "children" && !keyword ? childrenScopeNodes.value : modelNodes.value;
 
   if (keyword) {
+    nodes = modelNodes.value;
     nodes = nodes.filter((node) => {
       const searchable = `${node.name} ${node.originalName} ${node.parentName} ${node.uuid}`.toLowerCase();
       return searchable.includes(keyword);
     });
+  }
+
+  if (objectListMode.value === "children" && !keyword) {
+    return nodes;
   }
 
   switch (objectFilterMode.value) {
@@ -200,6 +255,57 @@ function selectModelNode(node: ModelObjectNode): void {
   twinScene.value?.selectModelObject(node.uuid);
 }
 
+function clearObjectListScope(): void {
+  childrenScopeNodes.value = [];
+  currentListParentName.value = "";
+  currentListParentUuid.value = "";
+}
+
+function setChildrenScope(parentNode: ModelObjectNode, children: ModelObjectNode[]): void {
+  objectSearchQuery.value = "";
+  objectFilterMode.value = "all";
+  objectListMode.value = "children";
+  objectListMessage.value = "";
+  currentListParentName.value = parentNode.name;
+  currentListParentUuid.value = parentNode.uuid;
+  childrenScopeNodes.value = children;
+}
+
+function handleObjectSearchInput(): void {
+  if (objectSearchQuery.value.trim()) {
+    objectListMode.value = "search";
+    objectFilterMode.value = "all";
+    objectListMessage.value = "";
+    clearObjectListScope();
+    return;
+  }
+
+  if (objectListMode.value === "search") {
+    objectListMode.value = "all";
+    clearObjectListScope();
+  }
+}
+
+function applyObjectFilter(filter: ObjectFilterMode): void {
+  if (filter === "children") {
+    viewChildObjects();
+    return;
+  }
+
+  objectFilterMode.value = filter;
+  objectListMessage.value = "";
+
+  if (filter === "all") {
+    objectSearchQuery.value = "";
+    objectListMode.value = "all";
+    clearObjectListScope();
+    return;
+  }
+
+  objectListMode.value = objectSearchQuery.value.trim() ? "search" : "all";
+  clearObjectListScope();
+}
+
 function setSelectedAsMovable(): void {
   if (!selectedModelNode.value) {
     return;
@@ -216,6 +322,14 @@ function clearMovablePart(): void {
   if (nextState) {
     bindingState.value = nextState;
   }
+}
+
+function enableFaultSimulation(): void {
+  faultSimulationState.value = twinScene.value?.enableFaultSimulation() ?? faultSimulationState.value;
+}
+
+function disableFaultSimulation(): void {
+  faultSimulationState.value = twinScene.value?.disableFaultSimulation() ?? faultSimulationState.value;
 }
 
 function focusSelectedObject(): void {
@@ -239,16 +353,42 @@ function focusMovablePart(): void {
 }
 
 function viewParentObject(): void {
-  if (!selectedParentNode.value) {
+  const parentNode =
+    selectedObjectUuid.value
+      ? twinScene.value?.getModelObjectParent(selectedObjectUuid.value) ?? selectedParentNode.value
+      : selectedParentNode.value;
+
+  if (!parentNode) {
+    objectListMessage.value = "当前对象没有父级";
     return;
   }
 
-  objectFilterMode.value = "siblings";
-  selectModelNode(selectedParentNode.value);
+  const children =
+    twinScene.value?.getModelObjectChildren(parentNode.uuid) ??
+    modelNodes.value.filter((node) => node.parentUuid === parentNode.uuid);
+
+  selectModelNode(parentNode);
+  setChildrenScope(parentNode, children);
 }
 
 function viewChildObjects(): void {
-  objectFilterMode.value = "children";
+  if (!selectedModelNode.value) {
+    objectListMessage.value = "请先选择对象";
+    return;
+  }
+
+  const children = twinScene.value?.getModelObjectChildren(selectedModelNode.value.uuid);
+  if (!children) {
+    objectListMessage.value = "未在场景中找到当前对象，无法查看子级";
+    return;
+  }
+
+  if (children.length === 0) {
+    objectListMessage.value = "当前对象没有子级";
+    return;
+  }
+
+  setChildrenScope(selectedModelNode.value, children);
 }
 
 function testMove(deltaZ: number): void {
@@ -349,12 +489,20 @@ function syncCalibrationForm(config: ModelExternalConfig): void {
     rotationX: config.transform.rotationDeg.x,
     rotationY: config.transform.rotationDeg.y,
     rotationZ: config.transform.rotationDeg.z,
-    scale: config.transform.scale.x,
+    scaleX: config.transform.scale.x,
+    scaleY: config.transform.scale.y,
+    scaleZ: config.transform.scale.z,
     positionX: config.transform.position.x,
     positionY: config.transform.position.y,
     positionZ: config.transform.position.z,
+    flipX: config.transform.flip?.x ?? false,
+    flipY: config.transform.flip?.y ?? false,
+    flipZ: config.transform.flip?.z ?? false,
     autoCenter: config.transform.autoCenter,
     groundToZero: config.transform.groundToZero,
+    preserveOriginalMaterial: config.materialConfig?.preserveOriginalMaterial ?? true,
+    defaultColor: config.materialConfig?.defaultColor ?? "#2f3437",
+    defaultOpacity: config.materialConfig?.defaultOpacity ?? 1,
   };
 }
 
@@ -363,7 +511,6 @@ function finiteNumber(value: number, fallback: number): number {
 }
 
 function buildCalibrationTransform(): ModelTransformSettings {
-  const scale = finiteNumber(calibrationForm.value.scale, 1);
   return {
     rotationDeg: {
       x: finiteNumber(calibrationForm.value.rotationX, 0),
@@ -376,35 +523,191 @@ function buildCalibrationTransform(): ModelTransformSettings {
       z: finiteNumber(calibrationForm.value.positionZ, 0),
     },
     scale: {
-      x: scale,
-      y: scale,
-      z: scale,
+      x: finiteNumber(calibrationForm.value.scaleX, 1),
+      y: finiteNumber(calibrationForm.value.scaleY, 1),
+      z: finiteNumber(calibrationForm.value.scaleZ, 1),
+    },
+    flip: {
+      x: calibrationForm.value.flipX,
+      y: calibrationForm.value.flipY,
+      z: calibrationForm.value.flipZ,
     },
     autoCenter: calibrationForm.value.autoCenter,
     groundToZero: calibrationForm.value.groundToZero,
   };
 }
 
+function buildEditedModelConfig(): ModelExternalConfig | undefined {
+  if (!modelConfig.value) {
+    return undefined;
+  }
+
+  return {
+    ...modelConfig.value,
+    transform: buildCalibrationTransform(),
+    materialConfig: {
+      preserveOriginalMaterial: calibrationForm.value.preserveOriginalMaterial,
+      defaultColor: calibrationForm.value.defaultColor,
+      defaultOpacity: finiteNumber(calibrationForm.value.defaultOpacity, 1),
+      selectionColor: modelConfig.value.materialConfig?.selectionColor ?? modelMaterialState.value.selectionColor,
+      movablePartColor: modelConfig.value.materialConfig?.movablePartColor ?? modelMaterialState.value.movablePartColor,
+      faultColor: modelConfig.value.materialConfig?.faultColor ?? modelMaterialState.value.faultColor,
+      objectColors: modelConfig.value.materialConfig?.objectColors ?? [],
+    },
+  };
+}
+
 function applyCalibration(): void {
-  const nextConfig = twinScene.value?.applyModelTransform(buildCalibrationTransform());
+  if (!isEditMode.value) {
+    return;
+  }
+
+  const editedConfig = buildEditedModelConfig();
+  if (!editedConfig) {
+    return;
+  }
+
+  const nextConfig = twinScene.value?.applyModelConfig(editedConfig);
   if (nextConfig) {
     modelConfig.value = nextConfig;
     calibrationCopyMessage.value = "";
+    editModeMessage.value = "已实时预览整机模型 root 配置。";
   }
 }
 
 async function copyModelConfigJson(): Promise<void> {
+  const nextConfig = buildEditedModelConfig() ?? modelConfig.value;
+  if (!nextConfig) {
+    return;
+  }
+
+  const json = `${JSON.stringify(nextConfig, null, 2)}\n`;
+  await navigator.clipboard.writeText(json);
+  calibrationCopyMessage.value = "已复制 JSON。";
+}
+
+function setAppMode(mode: AppMode): void {
+  appMode.value = mode;
+  editModeMessage.value = mode === "edit"
+    ? "当前编辑对象是整机模型 root，不是子部件。"
+    : "已切换到监控模式。";
+  if (mode === "edit") {
+    editBaselineConfig.value = modelConfig.value ? structuredClone(modelConfig.value) : undefined;
+    if (modelConfig.value) {
+      syncCalibrationForm(modelConfig.value);
+    }
+  }
+}
+
+function saveModelConfigToLocal(): void {
+  const nextConfig = buildEditedModelConfig();
+  if (!nextConfig) {
+    return;
+  }
+
+  const payload = {
+    config: nextConfig,
+    updatedAt: new Date().toISOString(),
+    source: "localStorage",
+  };
+  window.localStorage.setItem(modelConfigLocalStorageKey, JSON.stringify(payload, null, 2));
+  editBaselineConfig.value = structuredClone(nextConfig);
+  editModeMessage.value = `已保存到 localStorage：${modelConfigLocalStorageKey}`;
+}
+
+function exportModelConfigJson(): void {
+  const nextConfig = buildEditedModelConfig() ?? modelConfig.value;
+  if (!nextConfig) {
+    return;
+  }
+
+  const blob = new Blob([`${JSON.stringify(nextConfig, null, 2)}\n`], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${nextConfig.modelId || "model-config"}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  editModeMessage.value = "已导出 JSON。";
+}
+
+function clearLocalModelConfig(): void {
+  window.localStorage.removeItem(modelConfigLocalStorageKey);
+  editModeMessage.value = "已清除本地配置，刷新页面后将按静态配置加载。";
+}
+
+function mergeStaticModelConfig(base: ModelExternalConfig, raw: Partial<ModelExternalConfig>): ModelExternalConfig {
+  return {
+    ...base,
+    ...raw,
+    transform: {
+      ...base.transform,
+      ...raw.transform,
+      rotationDeg: {
+        ...base.transform.rotationDeg,
+        ...raw.transform?.rotationDeg,
+      },
+      position: {
+        ...base.transform.position,
+        ...raw.transform?.position,
+      },
+      scale: {
+        ...base.transform.scale,
+        ...raw.transform?.scale,
+      },
+      flip: {
+        x: false,
+        y: false,
+        z: false,
+        ...base.transform.flip,
+        ...raw.transform?.flip,
+      },
+    },
+    materialConfig: {
+      preserveOriginalMaterial: raw.materialConfig?.preserveOriginalMaterial ?? base.materialConfig?.preserveOriginalMaterial ?? true,
+      defaultColor: raw.materialConfig?.defaultColor ?? base.materialConfig?.defaultColor,
+      defaultOpacity: raw.materialConfig?.defaultOpacity ?? base.materialConfig?.defaultOpacity,
+      selectionColor: raw.materialConfig?.selectionColor ?? base.materialConfig?.selectionColor ?? modelMaterialState.value.selectionColor,
+      movablePartColor: raw.materialConfig?.movablePartColor ?? base.materialConfig?.movablePartColor ?? modelMaterialState.value.movablePartColor,
+      faultColor: raw.materialConfig?.faultColor ?? base.materialConfig?.faultColor ?? modelMaterialState.value.faultColor,
+      objectColors: raw.materialConfig?.objectColors ?? base.materialConfig?.objectColors ?? [],
+    },
+    modeConfig: {
+      defaultMode: raw.modeConfig?.defaultMode ?? base.modeConfig?.defaultMode ?? "monitor",
+      allowEditMode: raw.modeConfig?.allowEditMode ?? base.modeConfig?.allowEditMode ?? true,
+      localStorageKey: raw.modeConfig?.localStorageKey ?? base.modeConfig?.localStorageKey ?? modelConfigLocalStorageKey,
+    },
+  };
+}
+
+async function restoreStaticModelConfig(): Promise<void> {
   if (!modelConfig.value) {
     return;
   }
 
-  const nextConfig: ModelExternalConfig = {
-    ...modelConfig.value,
-    transform: buildCalibrationTransform(),
-  };
-  const json = `${JSON.stringify(nextConfig, null, 2)}\n`;
-  await navigator.clipboard.writeText(json);
-  calibrationCopyMessage.value = "已复制，可粘贴到 public/model-configs/lifter.json";
+  const response = await fetch("/model-configs/lifter.json", { cache: "no-store" });
+  const rawConfig = (await response.json()) as Partial<ModelExternalConfig>;
+  const staticConfig = mergeStaticModelConfig(modelConfig.value, rawConfig);
+  const nextConfig = twinScene.value?.applyModelConfig(staticConfig);
+  if (nextConfig) {
+    modelConfig.value = nextConfig;
+    syncCalibrationForm(nextConfig);
+    editBaselineConfig.value = structuredClone(nextConfig);
+    editModeMessage.value = "已恢复静态 lifter.json 配置预览；如需取消本地覆盖，请点击清除本地配置。";
+  }
+}
+
+function resetCurrentEdit(): void {
+  if (!editBaselineConfig.value) {
+    return;
+  }
+
+  const nextConfig = twinScene.value?.applyModelConfig(structuredClone(editBaselineConfig.value));
+  if (nextConfig) {
+    modelConfig.value = nextConfig;
+    syncCalibrationForm(nextConfig);
+    editModeMessage.value = "已重置当前编辑。";
+  }
 }
 
 onMounted(async () => {
@@ -435,6 +738,11 @@ onMounted(async () => {
     },
     onModelTreeChange: (nodes) => {
       modelNodes.value = nodes;
+      objectListMode.value = "all";
+      objectSearchQuery.value = "";
+      objectFilterMode.value = "all";
+      objectListMessage.value = "";
+      clearObjectListScope();
     },
     onBindingChange: (state) => {
       bindingState.value = state;
@@ -446,6 +754,11 @@ onMounted(async () => {
       modelConfig.value = config;
       if (config) {
         syncCalibrationForm(config);
+        if (!hasInitializedAppMode.value) {
+          appMode.value = config.modeConfig?.defaultMode === "edit" ? "edit" : "monitor";
+          hasInitializedAppMode.value = true;
+          editBaselineConfig.value = structuredClone(config);
+        }
       }
     },
     onPerformanceChange: (stats) => {
@@ -462,6 +775,12 @@ onMounted(async () => {
     },
     onInstanceDemoChange: (state) => {
       instanceDemoState.value = state;
+    },
+    onFaultSimulationChange: (state) => {
+      faultSimulationState.value = state;
+    },
+    onModelMaterialChange: (state) => {
+      modelMaterialState.value = state;
     },
   });
 
@@ -647,6 +966,22 @@ onBeforeUnmount(() => {
             <div>
               <dt>current URL</dt>
               <dd>{{ performanceStats?.currentUrl ?? "-" }}</dd>
+            </div>
+            <div>
+              <dt>enableLod</dt>
+              <dd>{{ modelConfig?.performance ? String(modelConfig.performance.enableLod) : "-" }}</dd>
+            </div>
+            <div>
+              <dt>defaultLevel</dt>
+              <dd>{{ modelConfig?.performance?.defaultLevel ?? "-" }}</dd>
+            </div>
+            <div>
+              <dt>cachePolicy</dt>
+              <dd>{{ modelConfig?.performance?.cachePolicy ?? "-" }}</dd>
+            </div>
+            <div>
+              <dt>chunkPolicy</dt>
+              <dd>{{ modelConfig?.performance?.chunkPolicy ?? "-" }}</dd>
             </div>
             <div>
               <dt>navigation mode</dt>
@@ -852,57 +1187,140 @@ onBeforeUnmount(() => {
 
         <section class="panel-section">
           <div class="section-heading">
-            <span>模型校准</span>
+            <span>模式切换</span>
+            <span class="mesh-code">{{ appMode }}</span>
           </div>
+          <div class="filter-row">
+            <button
+              class="filter-button"
+              :class="{ active: appMode === 'monitor' }"
+              type="button"
+              @click="setAppMode('monitor')"
+            >
+              监控模式
+            </button>
+            <button
+              class="filter-button"
+              :class="{ active: appMode === 'edit' }"
+              type="button"
+              @click="setAppMode('edit')"
+            >
+              编辑模式
+            </button>
+          </div>
+          <p class="empty-note">
+            {{
+              appMode === "edit"
+                ? "模型编辑模式：当前编辑对象是整机模型 root，不是子部件。"
+                : "监控模式：保留对象选择、异常查看、可动部件绑定、任务下发和视角控制，禁止编辑整机模型配置。"
+            }}
+          </p>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading">
+            <span>{{ isEditMode ? "模型编辑模式" : "模型配置摘要" }}</span>
+          </div>
+          <p v-if="!isEditMode" class="empty-note">
+            当前为 monitor 模式，只显示配置摘要。切换到 edit 模式后才能实时预览并保存整机模型 root 配置。
+          </p>
+          <p v-else class="task-warning">
+            编辑对象是整机模型 root；不要把子部件任务位置保存为模型配置。
+          </p>
           <div class="calibration-grid">
             <label>
               <span>rotationX</span>
-              <input v-model.number="calibrationForm.rotationX" type="number" step="1" @input="applyCalibration" />
+              <input v-model.number="calibrationForm.rotationX" type="number" step="1" :disabled="!isEditMode" @input="applyCalibration" />
             </label>
             <label>
               <span>rotationY</span>
-              <input v-model.number="calibrationForm.rotationY" type="number" step="1" @input="applyCalibration" />
+              <input v-model.number="calibrationForm.rotationY" type="number" step="1" :disabled="!isEditMode" @input="applyCalibration" />
             </label>
             <label>
               <span>rotationZ</span>
-              <input v-model.number="calibrationForm.rotationZ" type="number" step="1" @input="applyCalibration" />
+              <input v-model.number="calibrationForm.rotationZ" type="number" step="1" :disabled="!isEditMode" @input="applyCalibration" />
             </label>
             <label>
-              <span>scale</span>
-              <input v-model.number="calibrationForm.scale" type="number" min="0.001" step="0.01" @input="applyCalibration" />
+              <span>scaleX</span>
+              <input v-model.number="calibrationForm.scaleX" type="number" min="0.001" step="0.01" :disabled="!isEditMode" @input="applyCalibration" />
+            </label>
+            <label>
+              <span>scaleY</span>
+              <input v-model.number="calibrationForm.scaleY" type="number" min="0.001" step="0.01" :disabled="!isEditMode" @input="applyCalibration" />
+            </label>
+            <label>
+              <span>scaleZ</span>
+              <input v-model.number="calibrationForm.scaleZ" type="number" min="0.001" step="0.01" :disabled="!isEditMode" @input="applyCalibration" />
             </label>
             <label>
               <span>positionX</span>
-              <input v-model.number="calibrationForm.positionX" type="number" step="0.1" @input="applyCalibration" />
+              <input v-model.number="calibrationForm.positionX" type="number" step="0.1" :disabled="!isEditMode" @input="applyCalibration" />
             </label>
             <label>
               <span>positionY</span>
-              <input v-model.number="calibrationForm.positionY" type="number" step="0.1" @input="applyCalibration" />
+              <input v-model.number="calibrationForm.positionY" type="number" step="0.1" :disabled="!isEditMode" @input="applyCalibration" />
             </label>
             <label>
               <span>positionZ</span>
-              <input v-model.number="calibrationForm.positionZ" type="number" step="0.1" @input="applyCalibration" />
+              <input v-model.number="calibrationForm.positionZ" type="number" step="0.1" :disabled="!isEditMode" @input="applyCalibration" />
+            </label>
+            <label>
+              <span>defaultColor</span>
+              <input v-model="calibrationForm.defaultColor" :disabled="!isEditMode" @input="applyCalibration" />
+            </label>
+            <label>
+              <span>defaultOpacity</span>
+              <input v-model.number="calibrationForm.defaultOpacity" type="number" min="0" max="1" step="0.05" :disabled="!isEditMode" @input="applyCalibration" />
             </label>
           </div>
           <div class="calibration-switches">
             <label>
-              <input v-model="calibrationForm.autoCenter" type="checkbox" @change="applyCalibration" />
+              <input v-model="calibrationForm.flipX" type="checkbox" :disabled="!isEditMode" @change="applyCalibration" />
+              <span>flipX</span>
+            </label>
+            <label>
+              <input v-model="calibrationForm.flipY" type="checkbox" :disabled="!isEditMode" @change="applyCalibration" />
+              <span>flipY</span>
+            </label>
+            <label>
+              <input v-model="calibrationForm.flipZ" type="checkbox" :disabled="!isEditMode" @change="applyCalibration" />
+              <span>flipZ</span>
+            </label>
+            <label>
+              <input v-model="calibrationForm.autoCenter" type="checkbox" :disabled="!isEditMode" @change="applyCalibration" />
               <span>autoCenter</span>
             </label>
             <label>
-              <input v-model="calibrationForm.groundToZero" type="checkbox" @change="applyCalibration" />
+              <input v-model="calibrationForm.groundToZero" type="checkbox" :disabled="!isEditMode" @change="applyCalibration" />
               <span>groundToZero</span>
+            </label>
+            <label>
+              <input v-model="calibrationForm.preserveOriginalMaterial" type="checkbox" :disabled="!isEditMode" @change="applyCalibration" />
+              <span>preserveOriginalMaterial</span>
             </label>
           </div>
           <div class="action-grid">
-            <button class="mini-button" type="button" :disabled="!modelConfig" @click="applyCalibration">
-              应用
+            <button class="mini-button" type="button" :disabled="!isEditMode || !modelConfig" @click="saveModelConfigToLocal">
+              保存到本地
             </button>
-            <button class="mini-button secondary" type="button" :disabled="!modelConfig" @click="copyModelConfigJson">
+            <button class="mini-button secondary" type="button" :disabled="!isEditMode || !modelConfig" @click="copyModelConfigJson">
               复制 JSON
+            </button>
+            <button class="mini-button secondary" type="button" :disabled="!isEditMode || !modelConfig" @click="exportModelConfigJson">
+              导出 JSON
+            </button>
+            <button class="mini-button secondary" type="button" :disabled="!isEditMode" @click="clearLocalModelConfig">
+              清除本地配置
+            </button>
+            <button class="mini-button secondary" type="button" :disabled="!isEditMode || !modelConfig" @click="restoreStaticModelConfig">
+              恢复静态配置
+            </button>
+            <button class="mini-button secondary" type="button" :disabled="!isEditMode || !editBaselineConfig" @click="resetCurrentEdit">
+              重置当前编辑
             </button>
           </div>
           <p v-if="calibrationCopyMessage" class="copy-message">{{ calibrationCopyMessage }}</p>
+          <p v-if="editModeMessage" class="empty-note">{{ editModeMessage }}</p>
         </section>
 
         <section class="panel-section">
@@ -975,6 +1393,139 @@ onBeforeUnmount(() => {
 
         <section class="panel-section">
           <div class="section-heading">
+            <span>模型颜色配置</span>
+            <span class="mesh-code">{{ modelMaterialState.objectColorCount }} objectColors</span>
+          </div>
+          <dl class="meta-grid">
+            <div>
+              <dt>preserveOriginalMaterial</dt>
+              <dd>{{ modelMaterialState.preserveOriginalMaterial ? "true" : "false" }}</dd>
+            </div>
+            <div>
+              <dt>defaultColor</dt>
+              <dd>{{ modelMaterialState.defaultColor ?? "-" }}</dd>
+            </div>
+            <div>
+              <dt>defaultOpacity</dt>
+              <dd>{{ modelMaterialState.defaultOpacity === undefined ? "-" : modelMaterialState.defaultOpacity }}</dd>
+            </div>
+            <div>
+              <dt>selectionColor</dt>
+              <dd>{{ modelMaterialState.selectionColor }}</dd>
+            </div>
+            <div>
+              <dt>movablePartColor</dt>
+              <dd>{{ modelMaterialState.movablePartColor }}</dd>
+            </div>
+            <div>
+              <dt>faultColor</dt>
+              <dd>{{ modelMaterialState.faultColor }}</dd>
+            </div>
+            <div>
+              <dt>objectColors</dt>
+              <dd>{{ modelMaterialState.objectColorCount }}</dd>
+            </div>
+            <div>
+              <dt>applied</dt>
+              <dd>{{ modelMaterialState.appliedObjectColorCount }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading">
+            <span>异常模拟</span>
+            <span class="mesh-code">{{ faultSimulationState.enabled ? "enabled" : "disabled" }}</span>
+          </div>
+          <div class="action-grid">
+            <button
+              class="mini-button"
+              type="button"
+              :disabled="faultSimulationState.enabled || faultSimulationState.activeFaults.length === 0"
+              @click="enableFaultSimulation"
+            >
+              开启异常模拟
+            </button>
+            <button
+              class="mini-button secondary"
+              type="button"
+              :disabled="!faultSimulationState.enabled"
+              @click="disableFaultSimulation"
+            >
+              关闭异常模拟
+            </button>
+          </div>
+          <p class="binding-message" :class="{ blocked: !faultSimulationState.enabled }">
+            {{ faultSimulationState.message }}
+          </p>
+          <dl class="meta-grid">
+            <div>
+              <dt>deviceId</dt>
+              <dd>{{ faultSimulationState.deviceId || "-" }}</dd>
+            </div>
+            <div>
+              <dt>faultColor</dt>
+              <dd>{{ faultSimulationState.faultColor }}</dd>
+            </div>
+            <div>
+              <dt>fault count</dt>
+              <dd>{{ faultSimulationState.activeFaults.length }}</dd>
+            </div>
+            <div>
+              <dt>当前异常部件</dt>
+              <dd>{{ faultSimulationState.currentFaultObjectName ?? "当前对象无异常" }}</dd>
+            </div>
+          </dl>
+          <dl v-if="faultSimulationState.selectedFault" class="meta-grid object-detail">
+            <div>
+              <dt>faultCode</dt>
+              <dd>{{ faultSimulationState.selectedFault.faultCode }}</dd>
+            </div>
+            <div>
+              <dt>faultLevel</dt>
+              <dd>{{ faultSimulationState.selectedFault.faultLevel }}</dd>
+            </div>
+            <div>
+              <dt>faultMessage</dt>
+              <dd>{{ faultSimulationState.selectedFault.faultMessage }}</dd>
+            </div>
+            <div>
+              <dt>partName</dt>
+              <dd>{{ faultSimulationState.selectedFault.partName ?? "-" }}</dd>
+            </div>
+            <div>
+              <dt>objectName</dt>
+              <dd>{{ faultSimulationState.selectedFault.objectName ?? "-" }}</dd>
+            </div>
+            <div>
+              <dt>objectUuid</dt>
+              <dd>{{ faultSimulationState.selectedFault.objectUuid || faultSimulationState.selectedFault.matchedObjectUuid || "-" }}</dd>
+            </div>
+            <div>
+              <dt>deviceId</dt>
+              <dd>{{ faultSimulationState.deviceId || "-" }}</dd>
+            </div>
+            <div>
+              <dt>occurTime</dt>
+              <dd>{{ faultSimulationState.selectedFault.occurTime || "-" }}</dd>
+            </div>
+            <div>
+              <dt>suggestion</dt>
+              <dd>{{ faultSimulationState.selectedFault.suggestion ?? "-" }}</dd>
+            </div>
+          </dl>
+          <p v-else class="empty-note">当前对象无异常。</p>
+          <ul class="legend-list">
+            <li v-for="fault in faultSimulationState.activeFaults" :key="fault.faultCode">
+              <span :class="['legend-dot', fault.matched ? 'error' : 'stopped']"></span>
+              <span>{{ fault.partName || fault.objectName || fault.faultCode }}</span>
+              <code>{{ fault.matchMessage }}</code>
+            </li>
+          </ul>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading">
             <span>当前可动部件</span>
           </div>
           <p class="current-movable" :class="{ blocked: !bindingState.canMove }">
@@ -1024,6 +1575,42 @@ onBeforeUnmount(() => {
             <div>
               <dt>targetWorldZ</dt>
               <dd>{{ bindingState.targetWorldZ === undefined ? "-" : formatNumber(bindingState.targetWorldZ) }}</dd>
+            </div>
+            <div>
+              <dt>clampedTargetWorldZ</dt>
+              <dd>{{ bindingState.clampedTargetWorldZ === undefined ? "-" : formatNumber(bindingState.clampedTargetWorldZ) }}</dd>
+            </div>
+            <div>
+              <dt>startWorldZ</dt>
+              <dd>{{ bindingState.startWorldZ === undefined ? "-" : formatNumber(bindingState.startWorldZ) }}</dd>
+            </div>
+            <div>
+              <dt>modelMinZ</dt>
+              <dd>{{ bindingState.modelMinZ === undefined ? "-" : formatNumber(bindingState.modelMinZ) }}</dd>
+            </div>
+            <div>
+              <dt>modelMaxZ</dt>
+              <dd>{{ bindingState.modelMaxZ === undefined ? "-" : formatNumber(bindingState.modelMaxZ) }}</dd>
+            </div>
+            <div>
+              <dt>movableHeight</dt>
+              <dd>{{ bindingState.movableHeight === undefined ? "-" : formatNumber(bindingState.movableHeight) }}</dd>
+            </div>
+            <div>
+              <dt>minAllowedWorldZ</dt>
+              <dd>{{ bindingState.minAllowedWorldZ === undefined ? "-" : formatNumber(bindingState.minAllowedWorldZ) }}</dd>
+            </div>
+            <div>
+              <dt>maxAllowedWorldZ</dt>
+              <dd>{{ bindingState.maxAllowedWorldZ === undefined ? "-" : formatNumber(bindingState.maxAllowedWorldZ) }}</dd>
+            </div>
+            <div>
+              <dt>move basis</dt>
+              <dd>{{ bindingState.moveBasis ?? "-" }}</dd>
+            </div>
+            <div>
+              <dt>target clamped</dt>
+              <dd>{{ bindingState.targetClamped === undefined ? "-" : bindingState.targetClamped ? "true" : "false" }}</dd>
             </div>
             <div>
               <dt>当前 Z</dt>
@@ -1100,9 +1687,14 @@ onBeforeUnmount(() => {
           <p v-if="!bindingState.canMove" class="task-warning">
             {{
               hasLoadedModel
-                ? "未绑定可动部件时不能下发任务。"
+                ? bindingState.currentMovableObjectUuid
+                  ? bindingState.message
+                  : "请先选择并设置可动部件。"
                 : "未加载真实模型，无法执行提升机移动任务。"
             }}
+          </p>
+          <p v-else-if="isEditMode" class="task-warning">
+            编辑模式下不建议执行任务，请切回监控模式后下发。
           </p>
 
           <dl v-if="latestTask" class="meta-grid task-detail">
@@ -1131,12 +1723,38 @@ onBeforeUnmount(() => {
               <dd>{{ latestTask.currentWorldZ === undefined ? "-" : formatNumber(latestTask.currentWorldZ) }}</dd>
             </div>
             <div>
+              <dt>startWorldZ</dt>
+              <dd>{{ latestTask.startWorldZ === undefined ? "-" : formatNumber(latestTask.startWorldZ) }}</dd>
+            </div>
+            <div>
               <dt>targetWorldZ</dt>
               <dd>{{ latestTask.targetWorldZ === undefined ? "-" : formatNumber(latestTask.targetWorldZ) }}</dd>
             </div>
             <div>
+              <dt>clampedTargetWorldZ</dt>
+              <dd>{{ latestTask.clampedTargetWorldZ === undefined ? "-" : formatNumber(latestTask.clampedTargetWorldZ) }}</dd>
+            </div>
+            <div>
+              <dt>allowedWorldZ</dt>
+              <dd>
+                {{
+                  latestTask.minAllowedWorldZ === undefined || latestTask.maxAllowedWorldZ === undefined
+                    ? "-"
+                    : `${formatNumber(latestTask.minAllowedWorldZ)} ~ ${formatNumber(latestTask.maxAllowedWorldZ)}`
+                }}
+              </dd>
+            </div>
+            <div>
+              <dt>target clamped</dt>
+              <dd>{{ latestTask.targetClamped === undefined ? "-" : latestTask.targetClamped ? "true" : "false" }}</dd>
+            </div>
+            <div>
               <dt>status</dt>
               <dd>{{ latestTask.status }}</dd>
+            </div>
+            <div>
+              <dt>message</dt>
+              <dd>{{ latestTask.message ?? "-" }}</dd>
             </div>
           </dl>
         </section>
@@ -1161,20 +1779,33 @@ onBeforeUnmount(() => {
           </div>
           <label class="tree-search">
             <span>搜索 name / parentName / uuid</span>
-            <input v-model="objectSearchQuery" placeholder="搜索 name / parentName / uuid" />
+            <input
+              v-model="objectSearchQuery"
+              placeholder="搜索 name / parentName / uuid"
+              @input="handleObjectSearchInput"
+            />
           </label>
           <div class="filter-row">
             <button
               v-for="filter in filterOptions"
               :key="filter.value"
               class="filter-button"
-              :class="{ active: objectFilterMode === filter.value }"
+              :class="{ active: (objectListMode !== 'children' && objectFilterMode === filter.value) || (filter.value === 'children' && objectListMode === 'children') }"
               type="button"
-              @click="objectFilterMode = filter.value"
+              @click="applyObjectFilter(filter.value)"
             >
               {{ filter.label }}
             </button>
           </div>
+          <p class="empty-note">
+            mode={{ objectListModeLabel }}
+            <template v-if="objectListMode === 'children'">
+              · parent={{ currentListParentName || currentListParentUuid }} · children={{ childrenScopeNodes.length }}
+            </template>
+          </p>
+          <p v-if="objectListMessage" class="task-warning">
+            {{ objectListMessage }}
+          </p>
           <p v-if="isResultLimited" class="task-warning">
             搜索结果超过 100 条，当前只显示前 100 条，请缩小搜索条件。
           </p>
@@ -1183,7 +1814,7 @@ onBeforeUnmount(() => {
         <section class="panel-section model-tree-section">
           <div class="section-heading">
             <span>对象树列表</span>
-            <span class="mesh-code">{{ visibleModelNodes.length }} shown</span>
+            <span class="mesh-code">{{ visibleModelNodes.length }}/{{ filteredModelNodes.length }} shown</span>
           </div>
           <div class="model-tree">
             <button

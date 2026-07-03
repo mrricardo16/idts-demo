@@ -4,6 +4,8 @@ interface MoveByWorldZRequest {
   object: Object3D;
   targetWorldPosition: Vector3;
   unitsPerSecond: number;
+  minWorldZ?: number;
+  maxWorldZ?: number;
   onUpdate?: (currentWorldPosition: Vector3) => void;
   onComplete?: () => void;
 }
@@ -28,6 +30,23 @@ function worldToParentLocal(object: Object3D, worldPosition: Vector3): Vector3 {
   return localPosition;
 }
 
+function clampWorldZ(worldPosition: Vector3, minWorldZ?: number, maxWorldZ?: number): Vector3 {
+  if (minWorldZ === undefined && maxWorldZ === undefined) {
+    return worldPosition;
+  }
+
+  const minZ = minWorldZ ?? -Infinity;
+  const maxZ = maxWorldZ ?? Infinity;
+  const clampedZ = Math.min(maxZ, Math.max(minZ, worldPosition.z));
+  if (clampedZ === worldPosition.z) {
+    return worldPosition;
+  }
+
+  const clampedPosition = worldPosition.clone();
+  clampedPosition.z = clampedZ;
+  return clampedPosition;
+}
+
 export class AnimationManager {
   private activeMove?: ActiveMove;
 
@@ -46,11 +65,17 @@ export class AnimationManager {
   moveObjectToWorldPosition(request: MoveByWorldZRequest): void {
     const startLocalPosition = request.object.position.clone();
     const startWorldPosition = getWorldPosition(request.object);
-    const targetLocalPosition = worldToParentLocal(request.object, request.targetWorldPosition);
-    const distance = startWorldPosition.distanceTo(request.targetWorldPosition);
+    const targetWorldPosition = clampWorldZ(
+      request.targetWorldPosition,
+      request.minWorldZ,
+      request.maxWorldZ,
+    );
+    const targetLocalPosition = worldToParentLocal(request.object, targetWorldPosition);
+    const distance = startWorldPosition.distanceTo(targetWorldPosition);
 
     this.activeMove = {
       ...request,
+      targetWorldPosition,
       startLocalPosition,
       startWorldPosition,
       targetLocalPosition,
@@ -72,7 +97,14 @@ export class AnimationManager {
     if (this.activeMove.distance <= 0) {
       this.activeMove.object.position.copy(this.activeMove.targetLocalPosition);
       this.activeMove.object.updateMatrixWorld(true);
-      this.activeMove.onUpdate?.(getWorldPosition(this.activeMove.object));
+      const currentWorldPosition = clampWorldZ(
+        getWorldPosition(this.activeMove.object),
+        this.activeMove.minWorldZ,
+        this.activeMove.maxWorldZ,
+      );
+      this.activeMove.object.position.copy(worldToParentLocal(this.activeMove.object, currentWorldPosition));
+      this.activeMove.object.updateMatrixWorld(true);
+      this.activeMove.onUpdate?.(currentWorldPosition);
       this.activeMove.onComplete?.();
       this.activeMove = undefined;
       return false;
@@ -92,7 +124,14 @@ export class AnimationManager {
       progress,
     );
     this.activeMove.object.updateMatrixWorld(true);
-    this.activeMove.onUpdate?.(getWorldPosition(this.activeMove.object));
+    const currentWorldPosition = clampWorldZ(
+      getWorldPosition(this.activeMove.object),
+      this.activeMove.minWorldZ,
+      this.activeMove.maxWorldZ,
+    );
+    this.activeMove.object.position.copy(worldToParentLocal(this.activeMove.object, currentWorldPosition));
+    this.activeMove.object.updateMatrixWorld(true);
+    this.activeMove.onUpdate?.(currentWorldPosition);
 
     if (progress >= 1) {
       this.activeMove.onComplete?.();

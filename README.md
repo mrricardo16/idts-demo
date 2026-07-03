@@ -144,6 +144,14 @@ src/config/cameraControlConfig.ts
 
 当前 WASD 默认使用 `keyboardMoveMode = "fly"`：W/S 使用完整 `camera.forward`，A/D 使用当前相机右方向，Q/E 仍使用世界 Z 轴。如果后续需要厂区地面漫游，可以再切回 `ground` 模式，将 W/S 投影到 X/Y 地面平面。
 
+当前导航使用固定速度配置，不做模型尺寸或厂区范围自适应：
+
+- W/A/S/D 基础移动速度：`keyMoveSpeed = 12.0`。
+- Shift 加速倍率：`keyBoostMultiplier = 4.0`。
+- 滚轮移动速度：`wheelMoveSpeed = 4.0`。
+
+如果后续觉得移动过快或过慢，直接修改 `src/config/cameraControlConfig.ts` 中对应数值。
+
 键盘移动只要求页面有焦点，不需要先点击 3D canvas。用户在 `input`、`textarea`、`select` 或 `contenteditable` 中输入 W/A/S/D 时，不会移动相机。
 
 当前缩放配置：
@@ -185,11 +193,69 @@ src/config/cameraControlConfig.ts
 
 - “上移”表示世界坐标 `+Z`。
 - “下移”表示世界坐标 `-Z`。
-- F1 / F2 / F3 / F4 的 `z` 值表示相对于可动部件初始世界坐标的高度偏移。
+- 测试上移 / 下移每次都基于当前可动部件的实时 `world position`，例如上移 1m = 当前 `worldZ + 1`。
+- F1 / F2 / F3 / F4 的 `z` 值表示相对于整机模型底部 `modelMinZ` 的目标高度偏移。
+- 任务目标会换算为 `modelMinZ + floorOffsetZ + 可动部件底部偏移`，再限制在整机模型 world boundingBox 的高度范围内。
+- 所有目标高度都会 clamp 到 `minAllowedWorldZ ~ maxAllowedWorldZ`，避免载货台 / 箱体 / 轿厢移动到整机模型高度之外。
 
 模型经过 `rotationDeg` 修正后，子对象的 local axis 可能和世界 axis 不一致。如果直接修改 `object.position.z`，实际移动方向会沿父级局部 Z 轴执行，可能出现“点击上移但视觉上向下移动”的问题。
 
-当前任务下发和测试移动会先计算目标世界坐标，再通过 `parent.worldToLocal(targetWorldPosition)` 转换成父级局部坐标，最后对 local position 做插值动画。
+当前任务下发和测试移动会先计算目标世界坐标，再通过 `parent.worldToLocal(targetWorldPosition)` 转换成父级局部坐标，最后对 local position 做插值动画。动画每一帧也会重新检查 worldZ 边界，防止数值误差导致越界。
+
+## 前端异常模拟
+
+异常模拟配置位于 `public/model-configs/lifter.json` 的 `faultSimulation` 字段，当前只做前端 mock，不接后端。
+
+- `faultSimulation.enabled` 控制默认是否开启异常模拟；页面右侧也提供开启 / 关闭按钮。
+- `activeFaults` 中的异常对象优先用 `objectUuid` 匹配模型对象，`objectUuid` 为空时用 `objectName` 匹配。
+- 找不到对象时，右侧会提示“异常部件未匹配到模型对象”，页面不会崩溃。
+- 异常颜色从 `materialConfig.faultColor` 读取，未配置时使用 `#ff3333`。
+- 异常高亮会 clone mesh material，关闭异常或切换模型时恢复原始材质，避免永久污染 GLB 材质。
+- 异常红色优先级高于选中高亮、可动部件高亮、对象自定义颜色和默认颜色。
+
+点击异常部件仍然走原有对象选择逻辑；右侧会额外显示故障码、故障等级、故障信息、部件名称、关联对象和处理建议。点击非异常部件时显示“当前对象无异常”。
+
+## 模型颜色配置
+
+模型基础颜色配置位于 `public/model-configs/lifter.json` 的 `materialConfig` 字段。
+
+- `preserveOriginalMaterial = true` 时默认保留 GLB 原始材质，只对 `objectColors` 明确配置的对象覆盖颜色。
+- `preserveOriginalMaterial = false` 时，未命中 `objectColors` 的 mesh 会使用 `defaultColor/defaultOpacity`。
+- `objectColors` 匹配规则是 `objectUuid` 优先，`objectUuid` 为空或找不到时用 `objectName` 匹配。
+- `objectName` 可以指向 Group 或 Mesh；命中 Group 时会对其子级 Mesh 应用配置色。
+- 应用颜色前会 clone material，避免共用材质的其他对象被一起改色。
+- 模型切换、LOD 切换或页面销毁时会释放配置颜色 clone 出来的材质。
+
+颜色显示优先级为：异常 `faultColor` > 当前选中辅助框 `selectionColor` > 当前可动部件辅助框 `movablePartColor` > `objectColors` > `defaultColor` > 原始材质。异常关闭后会恢复到配置颜色或原始材质。
+
+## Monitor / Edit 模式
+
+页面支持两种前端模式：
+
+- `monitor`：监控模式，默认入口。保留模型展示、对象点击、查看子级 / 父级、异常模拟、可动部件设置、任务下发、WASD / 鼠标视角和 LOD 手动切换；禁止编辑整机模型配置。
+- `edit`：编辑模式。当前只编辑整机模型 root 的配置，不编辑子部件，不把可动部件任务位置保存为模型配置。
+
+模式默认值来自 `public/model-configs/lifter.json` 的 `modeConfig.defaultMode`，未配置时使用 `monitor`。编辑模式下可以实时预览：
+
+- `transform.position.x/y/z`
+- `transform.rotationDeg.x/y/z`
+- `transform.scale.x/y/z`
+- `transform.flip.x/y/z`
+- `transform.autoCenter`
+- `transform.groundToZero`
+- `materialConfig.defaultColor`
+- `materialConfig.defaultOpacity`
+- `materialConfig.preserveOriginalMaterial`
+
+`flip` 不通过长期保存负 scale 实现；前端应用时转换为 root 旋转修正，并重新计算 boundingBox、`modelMinZ / modelMaxZ` 和可动部件安全移动边界。`groundToZero = true` 时，变换后会重新贴地。
+
+纯前端 Demo 不会写回 `public/model-configs/lifter.json`。点击“保存到本地”会写入 localStorage：
+
+```text
+idts-demo:model-config:lifter-001
+```
+
+保存内容包含当前完整配置、`updatedAt` 和 `source: "localStorage"`。加载优先级为 localStorage 配置 > `public/model-configs/lifter.json` > 内置默认配置。点击“清除本地配置”后，刷新页面会恢复静态 JSON 配置。
 
 ## 性能观测指标
 
@@ -203,8 +269,18 @@ src/config/cameraControlConfig.ts
 - 当前模型级别
 - 当前模型 URL
 - 当前模型 mesh、material、texture、vertex、triangle 数量
+- `performance.enableLod`
+- `performance.defaultLevel`
+- `performance.cachePolicy`
+- `performance.chunkPolicy`
 
 模型结构统计在模型加载或手动切换成功后执行一次；运行时只按固定间隔读取 renderer.info 和 FPS，避免每帧深度遍历整个 GLB。
+
+`public/model-configs/lifter.json` 中的 `performance` 字段当前只作为前端性能方案预留，不改变模型加载主流程，不实现后端上传、异步转换、真实缓存或分块加载。建筑 CAD / 厂区级模型后续需要后端提供上传、转换、压缩、chunk manifest 和资源版本管理。
+
+当前阶段不主动把大 GLB 写入 IndexedDB，也不新增 Service Worker。浏览器侧优先依赖 HTTP Cache / ETag / Cache-Control；`allowIndexedDbCache` 只作为后续能力开关预留。
+
+更详细的性能优化边界见 [docs/model-performance-boundary.md](docs/model-performance-boundary.md)。
 
 ## Three.js 资源释放
 

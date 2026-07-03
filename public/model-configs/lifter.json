@@ -19,6 +19,11 @@
       "y": 1,
       "z": 1
     },
+    "flip": {
+      "x": false,
+      "y": false,
+      "z": false
+    },
     "autoCenter": true,
     "groundToZero": true
   },
@@ -40,5 +45,51 @@
     "initialFallbackOrder": ["medium", "low", "source", "high", "proxy"],
     "nearDistance": 20,
     "farDistance": 80
+  },
+  "materialConfig": {
+    "preserveOriginalMaterial": true,
+    "defaultColor": "#2f3437",
+    "defaultOpacity": 1,
+    "selectionColor": "#00e5ff",
+    "movablePartColor": "#00ff99",
+    "faultColor": "#ff3333",
+    "objectColors": [
+      {
+        "objectUuid": "",
+        "objectName": "NAUO2",
+        "color": "#4a90e2",
+        "opacity": 1,
+        "description": "载货台颜色"
+      }
+    ]
+  },
+  "faultSimulation": {
+    "enabled": false,
+    "deviceId": "LIFTER-001",
+    "activeFaults": [
+      {
+        "faultCode": "LIFT-E-001",
+        "faultLevel": "error",
+        "faultMessage": "提升机载货台位置异常",
+        "partName": "载货台",
+        "objectName": "NAUO2",
+        "objectUuid": "",
+        "suggestion": "请检查载货台定位传感器与升降电机状态",
+        "occurTime": ""
+      }
+    ]
+  },
+  "modeConfig": {
+    "defaultMode": "monitor",
+    "allowEditMode": true,
+    "localStorageKey": "idts-demo:model-config:lifter-001"
+  },
+  "performance": {
+    "enableLod": false,
+    "defaultLevel": "source",
+    "preferHttpCache": true,
+    "allowIndexedDbCache": false,
+    "chunkPolicy": "none",
+    "cachePolicy": "browser-http-cache"
   }
 }

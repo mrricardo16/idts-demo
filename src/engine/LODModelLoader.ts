@@ -3,6 +3,12 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { ModelManifestLoader } from "./ModelManifestLoader";
 import { ModelTransformApplier } from "./ModelTransformApplier";
 import type {
+  ModelFaultSimulationConfig,
+  ModelMaterialConfig,
+  ModelModeConfig,
+  ModelPerformanceConfig,
+} from "../types/modelConfig";
+import type {
   ModelBindingSettings,
   ModelExternalConfig,
   ModelLODLevel,
@@ -10,6 +16,8 @@ import type {
   ModelTransformSettings,
   TwinDevice,
 } from "../types/twin";
+
+export const modelConfigLocalStorageKey = "idts-demo:model-config:lifter-001";
 
 export interface LODLoadedModel {
   root?: Group;
@@ -129,6 +137,12 @@ export class LODModelLoader {
 
   private async loadModelConfig(): Promise<ModelExternalConfig> {
     try {
+      const localConfig = this.loadLocalModelConfig();
+      if (localConfig) {
+        this.config = this.mergeModelConfig(localConfig);
+        return this.config;
+      }
+
       const response = await fetch("/model-configs/lifter.json", { cache: "no-store" });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -144,11 +158,38 @@ export class LODModelLoader {
     return this.config;
   }
 
+  private loadLocalModelConfig(): Partial<ModelExternalConfig> | undefined {
+    try {
+      if (typeof window === "undefined") {
+        return undefined;
+      }
+
+      const raw = window.localStorage.getItem(modelConfigLocalStorageKey);
+      if (!raw) {
+        return undefined;
+      }
+
+      const parsed = JSON.parse(raw) as { config?: Partial<ModelExternalConfig> } & Partial<ModelExternalConfig>;
+      return parsed.config ?? parsed;
+    } catch (error) {
+      console.warn("本地模型配置读取失败，继续使用静态配置。", error);
+      return undefined;
+    }
+  }
+
   private mergeModelConfig(rawConfig: Partial<ModelExternalConfig>): ModelExternalConfig {
     const fallback = this.createDefaultModelConfig();
     const rawTransform = (rawConfig.transform ?? {}) as Partial<ModelTransformSettings>;
     const rawBindings = (rawConfig.bindings ?? {}) as Partial<ModelBindingSettings>;
     const rawLod = (rawConfig.lod ?? {}) as Partial<ModelLODSettings>;
+    const rawMaterialConfig = (rawConfig.materialConfig ?? {}) as Partial<ModelMaterialConfig>;
+    const rawFaultSimulation = (rawConfig.faultSimulation ?? {}) as Partial<ModelFaultSimulationConfig>;
+    const rawModeConfig = (rawConfig.modeConfig ?? {}) as Partial<ModelModeConfig>;
+    const rawPerformance = (rawConfig.performance ?? {}) as Partial<ModelPerformanceConfig>;
+    const fallbackMaterialConfig = fallback.materialConfig as ModelMaterialConfig;
+    const fallbackFaultSimulation = fallback.faultSimulation as ModelFaultSimulationConfig;
+    const fallbackModeConfig = fallback.modeConfig as ModelModeConfig;
+    const fallbackPerformance = fallback.performance as ModelPerformanceConfig;
 
     return {
       ...fallback,
@@ -168,6 +209,12 @@ export class LODModelLoader {
           ...fallback.transform.scale,
           ...rawTransform.scale,
         },
+        flip: {
+          x: false,
+          y: false,
+          z: false,
+          ...rawTransform.flip,
+        },
       },
       bindings: {
         ...fallback.bindings,
@@ -176,6 +223,24 @@ export class LODModelLoader {
       lod: {
         ...fallback.lod,
         ...rawLod,
+      },
+      materialConfig: {
+        ...fallbackMaterialConfig,
+        ...rawMaterialConfig,
+        objectColors: rawMaterialConfig.objectColors ?? fallbackMaterialConfig.objectColors,
+      },
+      faultSimulation: {
+        ...fallbackFaultSimulation,
+        ...rawFaultSimulation,
+        activeFaults: rawFaultSimulation.activeFaults ?? fallbackFaultSimulation.activeFaults,
+      },
+      modeConfig: {
+        ...fallbackModeConfig,
+        ...rawModeConfig,
+      },
+      performance: {
+        ...fallbackPerformance,
+        ...rawPerformance,
       },
     };
   }
@@ -234,6 +299,7 @@ export class LODModelLoader {
         rotationDeg: { x: 180, y: 0, z: 0 },
         position: { x: 0, y: 0, z: 0 },
         scale: { x: 1, y: 1, z: 1 },
+        flip: { x: false, y: false, z: false },
         autoCenter: true,
         groundToZero: true,
       },
@@ -255,6 +321,34 @@ export class LODModelLoader {
         initialFallbackOrder: ["medium", "low", "source", "high", "proxy"],
         nearDistance: 20,
         farDistance: 80,
+      },
+      materialConfig: {
+        preserveOriginalMaterial: true,
+        defaultColor: "#d8dee9",
+        defaultOpacity: 1,
+        selectionColor: "#69f0ff",
+        movablePartColor: "#21c17a",
+        faultColor: "#ff3333",
+        objectColors: [],
+      },
+      faultSimulation: {
+        enabled: false,
+        deviceId: "LIFTER-001",
+        activeFaults: [],
+      },
+      modeConfig: {
+        defaultMode: "monitor",
+        allowEditMode: true,
+        localStorageKey: modelConfigLocalStorageKey,
+      },
+      performance: {
+        enableLod: false,
+        defaultLevel: "source",
+        cachePolicy: "browser-http-cache",
+        chunkPolicy: "none",
+        preferHttpCache: true,
+        allowIndexedDbCache: false,
+        maxInitialLoadSizeMb: 50,
       },
     };
   }
