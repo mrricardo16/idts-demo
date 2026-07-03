@@ -739,11 +739,15 @@ onBeforeUnmount(() => {
               <dd>{{ cameraControlState?.keyboardMoveMode ?? "-" }}</dd>
             </div>
             <div>
+              <dt>keyboard active source</dt>
+              <dd>{{ cameraControlState?.keyboardActiveSource ?? "-" }}</dd>
+            </div>
+            <div>
               <dt>pressed keys</dt>
               <dd>{{ cameraControlState?.pressedKeys?.join(", ") || "-" }}</dd>
             </div>
             <div>
-              <dt>active</dt>
+              <dt>canvas active</dt>
               <dd>{{ cameraControlState?.navigationActive === undefined ? "-" : String(cameraControlState.navigationActive) }}</dd>
             </div>
             <div>

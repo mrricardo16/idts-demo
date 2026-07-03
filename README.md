@@ -127,8 +127,8 @@ src/config/cameraControlConfig.ts
 - 左键拖动：只改变相机朝向，也就是 FPS / free-look 风格的 yaw / pitch，不旋转模型本体。
 - 右键拖动：当前禁用，不再作为旋转或平移入口。
 - 中键 / 滚轮：沿当前 `camera.forward` 前进或后退，直接移动 `camera.position`，不修改 `controls.target`。
-- W / S：在地面 X/Y 平面内前进 / 后退。
-- A / D：在地面 X/Y 平面内左移 / 右移。
+- W / S：沿当前相机视角方向前进 / 后退。
+- A / D：沿当前相机右方向左移 / 右移。
 - Q / E：沿世界 Z 轴下降 / 上升。
 - Shift：按住后提高键盘移动速度。
 
@@ -142,9 +142,9 @@ src/config/cameraControlConfig.ts
 
 这些逻辑在当前工业模型 Demo 中容易导致 `controls.target` 漂移、缩放手感异常或点击选择回归。普通滚轮缩放由 `src/engine/FreeLookControls.ts` 处理，只移动相机位置，不做 Raycaster 焦点缩放，也不触发模型加载或 LOD 切换。
 
-当前 WASD 默认使用 `keyboardMoveMode = "ground"`，适合厂区 / 仓库漫游：W/S 会把相机 forward 投影到 X/Y 地面平面后移动，A/D 使用同一地面平面的左右方向，Q/E 仍使用世界 Z 轴。滚轮移动不同于 WASD，会沿完整相机视角方向前进 / 后退，包括 pitch。
+当前 WASD 默认使用 `keyboardMoveMode = "fly"`：W/S 使用完整 `camera.forward`，A/D 使用当前相机右方向，Q/E 仍使用世界 Z 轴。如果后续需要厂区地面漫游，可以再切回 `ground` 模式，将 W/S 投影到 X/Y 地面平面。
 
-键盘移动只在 3D 视图激活后生效。用户在 `input`、`textarea`、`select` 或 `contenteditable` 中输入 W/A/S/D 时，不会移动相机。
+键盘移动只要求页面有焦点，不需要先点击 3D canvas。用户在 `input`、`textarea`、`select` 或 `contenteditable` 中输入 W/A/S/D 时，不会移动相机。
 
 当前缩放配置：
 
@@ -177,7 +177,7 @@ src/config/cameraControlConfig.ts
 - “聚焦整机”：聚焦当前模型整体中心，相机移动到能完整看到模型的位置。
 - “重置视角”：恢复默认观察偏移，将相机朝向更新到模型中心，并恢复整机距离参考。
 
-右侧性能 / 调试面板会显示 `navigation mode = free-look`、`orbit controls = disabled`、`zoom mode = move-along-camera-forward`、`camera.forward`、`yaw / pitch`、`wheel speed`、`look sensitivity`、`look invert X/Y`、`keyboard move mode`、`pressed keys` 和 `active`。点击模型、点击对象树、设为可动部件、任务下发移动当前绑定对象都不应触发模型重新加载。
+右侧性能 / 调试面板会显示 `navigation mode = free-look`、`orbit controls = disabled`、`zoom mode = move-along-camera-forward`、`camera.forward`、`yaw / pitch`、`wheel speed`、`look sensitivity`、`look invert X/Y`、`keyboard move mode`、`keyboard active source`、`pressed keys` 和 `canvas active`。点击模型、点击对象树、设为可动部件、任务下发移动当前绑定对象都不应触发模型重新加载。
 
 ## 世界 Z 轴移动
 

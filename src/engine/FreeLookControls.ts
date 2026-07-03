@@ -15,6 +15,7 @@ export interface FreeLookDebugState {
   invertLookY: boolean;
   keyboardMove: "enabled" | "disabled";
   keyboardMoveMode: "ground" | "fly";
+  keyboardActiveSource: "page-focus";
   pressedKeys: string[];
   active: boolean;
   keyMoveSpeed: number;
@@ -101,6 +102,7 @@ export class FreeLookControls {
       invertLookY: cameraControlConfig.navigation.invertLookY,
       keyboardMove: cameraControlConfig.navigation.enableKeyboardMove ? "enabled" : "disabled",
       keyboardMoveMode: cameraControlConfig.navigation.keyboardMoveMode,
+      keyboardActiveSource: "page-focus",
       pressedKeys: Array.from(this.pressedKeys).sort(),
       active: this.isActive,
       keyMoveSpeed: cameraControlConfig.navigation.keyMoveSpeed,
@@ -155,6 +157,18 @@ export class FreeLookControls {
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("blur", this.handleWindowBlur);
+  }
+
+  needsContinuousRender(): boolean {
+    return this.isKeyboardMoving();
+  }
+
+  isKeyboardMoving(): boolean {
+    return (
+      cameraControlConfig.navigation.enableKeyboardMove &&
+      this.hasPressedMovementKey() &&
+      this.canUseKeyboardNavigation(document.activeElement)
+    );
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
@@ -247,7 +261,7 @@ export class FreeLookControls {
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    if (!cameraControlConfig.navigation.enableKeyboardMove || !this.isActive || this.isEditableTarget(event.target)) {
+    if (!cameraControlConfig.navigation.enableKeyboardMove || !this.canUseKeyboardNavigation(event.target)) {
       return;
     }
 
@@ -258,17 +272,20 @@ export class FreeLookControls {
 
     this.pressedKeys.add(key);
     event.preventDefault();
+    this.onChange();
   };
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
     const key = this.normalizeKey(event);
     if (key) {
       this.pressedKeys.delete(key);
+      this.onChange();
     }
   };
 
   private readonly handleWindowBlur = (): void => {
     this.pressedKeys.clear();
+    this.onChange();
   };
 
   private createBoundingSphere(object: Object3D): Sphere | undefined {
@@ -316,10 +333,15 @@ export class FreeLookControls {
   private updateKeyboardMovement(deltaTime: number): void {
     if (
       !cameraControlConfig.navigation.enableKeyboardMove ||
-      !this.isActive ||
       this.pressedKeys.size === 0 ||
       deltaTime <= 0
     ) {
+      return;
+    }
+
+    if (!this.canUseKeyboardNavigation(document.activeElement)) {
+      this.pressedKeys.clear();
+      this.onChange();
       return;
     }
 
@@ -402,6 +424,29 @@ export class FreeLookControls {
     }
 
     return undefined;
+  }
+
+  private hasPressedMovementKey(): boolean {
+    return (
+      this.pressedKeys.has("w") ||
+      this.pressedKeys.has("a") ||
+      this.pressedKeys.has("s") ||
+      this.pressedKeys.has("d") ||
+      this.pressedKeys.has("q") ||
+      this.pressedKeys.has("e")
+    );
+  }
+
+  private canUseKeyboardNavigation(target?: EventTarget | null): boolean {
+    if (!document.hasFocus()) {
+      return false;
+    }
+
+    if (this.isEditableTarget(target ?? null) || this.isEditableTarget(document.activeElement)) {
+      return false;
+    }
+
+    return true;
   }
 
   private isEditableTarget(target: EventTarget | null): boolean {

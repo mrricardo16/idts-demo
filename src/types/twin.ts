@@ -148,6 +148,7 @@ export interface CameraControlDebugState {
   invertLookY?: boolean;
   keyboardMove?: "enabled" | "disabled";
   keyboardMoveMode?: "ground" | "fly";
+  keyboardActiveSource?: "page-focus";
   pressedKeys?: string[];
   navigationActive?: boolean;
   keyMoveSpeed?: number;

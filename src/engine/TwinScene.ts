@@ -1606,6 +1606,7 @@ export class TwinScene {
 
     const hasActiveAnimation = this.animationManager.update();
     this.controlsManager.update();
+    const hasActiveNavigation = this.controlsManager.needsContinuousRender();
     this.rendererManager.render(this.sceneManager.scene, this.cameraManager.camera);
     this.performanceMonitor.recordFrame();
     this.callbacks.onCameraControlChange(this.controlsManager.getDebugState());
@@ -1620,7 +1621,7 @@ export class TwinScene {
       );
     }
 
-    if (hasActiveAnimation) {
+    if (hasActiveAnimation || hasActiveNavigation) {
       this.requestRender();
     }
   };

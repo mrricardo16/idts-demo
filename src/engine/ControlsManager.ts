@@ -38,6 +38,7 @@ export class ControlsManager {
       invertLookY: state.invertLookY,
       keyboardMove: state.keyboardMove,
       keyboardMoveMode: state.keyboardMoveMode,
+      keyboardActiveSource: state.keyboardActiveSource,
       pressedKeys: state.pressedKeys,
       navigationActive: state.active,
       keyMoveSpeed: state.keyMoveSpeed,
@@ -56,6 +57,10 @@ export class ControlsManager {
 
   resetView(): void {
     this.freeLookControls.resetView();
+  }
+
+  needsContinuousRender(): boolean {
+    return this.freeLookControls.needsContinuousRender();
   }
 
   dispose(): void {
