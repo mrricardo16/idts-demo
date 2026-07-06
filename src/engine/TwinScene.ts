@@ -50,6 +50,7 @@ import type {
   ModelObjectNode,
   ModelPerformanceStats,
   ModelTransformSettings,
+  AppMode,
   TwinSceneMode,
   TwinDevice,
 } from "../types/twin";
@@ -127,6 +128,7 @@ export class TwinScene {
   private performanceTimerId = 0;
   private selectedMeshName = "";
   private selectedModelUuid = "";
+  private appMode: AppMode = "monitor";
   private loadedUseFallback = false;
   private selectedHelper?: Box3Helper;
   private movableHelper?: Box3Helper;
@@ -730,6 +732,10 @@ export class TwinScene {
     this.callbacks.onPerformanceChange(undefined);
   }
 
+  setAppMode(mode: AppMode): void {
+    this.appMode = mode;
+  }
+
   applyModelTransform(transform: ModelTransformSettings): ModelExternalConfig | undefined {
     if (!this.modelRoot || !this.modelConfig) {
       return undefined;
@@ -743,6 +749,11 @@ export class TwinScene {
 
   applyModelConfig(config: ModelExternalConfig): ModelExternalConfig | undefined {
     if (!this.modelRoot || !this.modelConfig) {
+      return undefined;
+    }
+
+    if (this.appMode !== "edit") {
+      console.warn("monitor 模式下禁止编辑整机模型配置");
       return undefined;
     }
 

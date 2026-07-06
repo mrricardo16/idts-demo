@@ -588,6 +588,7 @@ async function copyModelConfigJson(): Promise<void> {
 
 function setAppMode(mode: AppMode): void {
   appMode.value = mode;
+  twinScene.value?.setAppMode(mode);
   editModeMessage.value = mode === "edit"
     ? "当前编辑对象是整机模型 root，不是子部件。"
     : "已切换到监控模式。";
@@ -755,7 +756,9 @@ onMounted(async () => {
       if (config) {
         syncCalibrationForm(config);
         if (!hasInitializedAppMode.value) {
-          appMode.value = config.modeConfig?.defaultMode === "edit" ? "edit" : "monitor";
+          const initialMode = config.modeConfig?.defaultMode === "edit" ? "edit" : "monitor";
+          appMode.value = initialMode;
+          twinScene.value?.setAppMode(initialMode);
           hasInitializedAppMode.value = true;
           editBaselineConfig.value = structuredClone(config);
         }
