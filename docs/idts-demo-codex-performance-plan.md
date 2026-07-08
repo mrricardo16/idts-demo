@@ -1359,7 +1359,7 @@ npm run build：通过 / 失败
 正确方式是：
 
 ```text
-先把本文档保存为 docs/codex-performance-plan.md。
+先把本文档保存为 docs/idts-demo-codex-performance-plan.md。
 然后一次只发一个阶段给 Codex。
 每个阶段通过后再发下一阶段。
 ```
@@ -1367,7 +1367,7 @@ npm run build：通过 / 失败
 建议第一条 Codex 任务：
 
 ```text
-请读取 AGENTS.md 和 docs/codex-performance-plan.md。
+请读取 AGENTS.md 和 docs/idts-demo-codex-performance-plan.md。
 当前只执行阶段 0：冻结当前交互基线。
 不要执行后续阶段。
 修改前先输出影响范围，等待我确认。

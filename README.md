@@ -282,6 +282,16 @@ idts-demo:model-config:lifter-001
 
 更详细的性能优化边界见 [docs/model-performance-boundary.md](docs/model-performance-boundary.md)。
 
+## 文档目录
+
+项目文档统一放在 `docs` 目录：
+
+- [docs/model-performance-boundary.md](docs/model-performance-boundary.md)：纯前端性能边界与后续后端流水线分工。
+- [docs/model-asset-guideline.md](docs/model-asset-guideline.md)：模型资产检查、命名和轻量化约定。
+- [docs/factory-scale-roadmap.md](docs/factory-scale-roadmap.md)：厂区级能力的长期技术路线。
+- [docs/idts-demo-codex-performance-plan.md](docs/idts-demo-codex-performance-plan.md)：Codex 分阶段性能优化执行方案。
+- [docs/idts-digital-twin-project-technical-plan.md](docs/idts-digital-twin-project-technical-plan.md)：正式数字孪生项目技术方案与实施计划。
+
 ## Three.js 资源释放
 
 模型切换和页面销毁会通过 `src/engine/ResourceDisposer.ts` 集中释放 Three.js 资源：

@@ -13,7 +13,7 @@ import { AnimationManager } from "./AnimationManager";
 import { CameraManager } from "./CameraManager";
 import { ChunkLoader } from "./ChunkLoader";
 import { ControlsManager } from "./ControlsManager";
-import { FaultSimulationManager, type FaultSimulationState } from "./FaultSimulationManager";
+import { FaultSimulationManager, type FaultSimulationState, type RuntimeFaultInfo } from "./FaultSimulationManager";
 import { HitBoxManager } from "./HitBoxManager";
 import { InstancedDemoManager } from "./InstancedDemoManager";
 import { InteractionManager, type InteractionPointerInfo } from "./InteractionManager";
@@ -69,7 +69,21 @@ interface TwinSceneCallbacks {
   onAreaStateChange: (state: AreaRuntimeState) => void;
   onInstanceDemoChange: (state: InstanceDemoState) => void;
   onFaultSimulationChange: (state: FaultSimulationState) => void;
+  onFaultCalloutAnchorChange: (anchor: FaultCalloutAnchor | undefined) => void;
   onModelMaterialChange: (state: ModelMaterialState) => void;
+}
+
+export interface FaultCalloutAnchor {
+  x: number;
+  y: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+interface FaultCalloutPointerState {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
 }
 
 interface ModelWorldBounds {
@@ -129,6 +143,8 @@ export class TwinScene {
   private selectedMeshName = "";
   private selectedModelUuid = "";
   private appMode: AppMode = "monitor";
+  private faultCalloutPointerState?: FaultCalloutPointerState;
+  private faultCalloutWheelFrameId = 0;
   private loadedUseFallback = false;
   private selectedHelper?: Box3Helper;
   private movableHelper?: Box3Helper;
@@ -157,6 +173,7 @@ export class TwinScene {
       this.rendererManager.renderer.domElement,
       this.requestRender,
     );
+    this.installFaultCalloutInteractionListeners();
     window.addEventListener("resize", this.handleResize);
   }
 
@@ -212,6 +229,7 @@ export class TwinScene {
       return;
     }
 
+    this.closeFaultCallout();
     if (this.sceneMode === "area") {
       await this.loadAreaDemo([level]);
       return;
@@ -265,6 +283,7 @@ export class TwinScene {
       return;
     }
 
+    this.closeFaultCallout();
     this.sceneMode = "single";
     this.currentDevices = this.statusManager.getDevices();
     this.callbacks.onDevicesChange(this.currentDevices);
@@ -572,6 +591,7 @@ export class TwinScene {
     this.callbacks.onFaultSimulationChange(
       this.faultSimulationManager.configure(loaded.root, loaded.config),
     );
+    this.callbacks.onFaultCalloutAnchorChange(undefined);
     this.updateBindingState(
       this.createUnboundState("小区域 Demo 已加载。请先点击某台设备，再展开该设备内部对象树并手动选择可动部件。"),
     );
@@ -674,6 +694,7 @@ export class TwinScene {
     this.callbacks.onFaultSimulationChange(
       this.faultSimulationManager.configure(loaded.root, loaded.config),
     );
+    this.callbacks.onFaultCalloutAnchorChange(undefined);
     this.callbacks.onBindingChange(bindingState);
     this.callbacks.onModelConfigChange(loaded.config);
     this.callbacks.onPerformanceChange(this.getPerformanceStats());
@@ -681,17 +702,21 @@ export class TwinScene {
     this.updateSelectionHelper(
       restoredSelectedNode ? loaded.root.getObjectByProperty("uuid", restoredSelectedNode.uuid) : undefined,
     );
-    this.callbacks.onFaultSimulationChange(
-      this.faultSimulationManager.refreshSelection(
-        restoredSelectedNode ? loaded.root.getObjectByProperty("uuid", restoredSelectedNode.uuid) : undefined,
-      ),
-    );
+    const restoredSelectedObject = restoredSelectedNode
+      ? loaded.root.getObjectByProperty("uuid", restoredSelectedNode.uuid)
+      : undefined;
+    const restoredFaultState = this.faultSimulationManager.refreshSelection(restoredSelectedObject);
+    this.callbacks.onFaultSimulationChange(restoredFaultState);
+    this.updateFaultCalloutAnchor(restoredFaultState, restoredSelectedObject);
 
     this.interactionManager = new InteractionManager(
       this.rendererManager.renderer.domElement,
       this.cameraManager.camera,
       loaded.root,
       this.handleSelect,
+      [loaded.root],
+      "mesh",
+      this.handleModelMiss,
     );
   }
 
@@ -715,6 +740,7 @@ export class TwinScene {
     this.callbacks.onModelTreeChange([]);
     this.callbacks.onSelectModelNode(undefined);
     this.callbacks.onFaultSimulationChange(this.faultSimulationManager.getState());
+    this.callbacks.onFaultCalloutAnchorChange(undefined);
     this.callbacks.onModelMaterialChange(this.modelMaterialManager.getState());
     this.callbacks.onAreaStateChange(this.updateAreaState({
       sceneMode: this.sceneMode,
@@ -734,6 +760,7 @@ export class TwinScene {
 
   setAppMode(mode: AppMode): void {
     this.appMode = mode;
+    this.closeFaultCallout();
   }
 
   applyModelTransform(transform: ModelTransformSettings): ModelExternalConfig | undefined {
@@ -775,6 +802,7 @@ export class TwinScene {
     this.callbacks.onFaultSimulationChange(
       this.faultSimulationManager.configure(this.modelRoot, this.modelConfig),
     );
+    this.callbacks.onFaultCalloutAnchorChange(undefined);
     if (wasFaultEnabled) {
       this.callbacks.onFaultSimulationChange(this.faultSimulationManager.enable());
     }
@@ -825,7 +853,9 @@ export class TwinScene {
     this.selectedMeshName = deviceId;
     this.removeSelectionHelper();
     this.updateSelectionHelper(clickedObject ?? deviceRoot);
-    this.callbacks.onFaultSimulationChange(this.faultSimulationManager.refreshSelection(clickedObject ?? deviceRoot));
+    const faultState = this.faultSimulationManager.refreshSelection(clickedObject ?? deviceRoot);
+    this.callbacks.onFaultSimulationChange(faultState);
+    this.updateFaultCalloutAnchor(faultState, clickedObject ?? deviceRoot);
     this.removeMovableHelpers();
     this.movablePart = undefined;
     this.movableBaseWorldPosition = undefined;
@@ -870,7 +900,9 @@ export class TwinScene {
     }
     this.callbacks.onSelectModelNode(node);
     this.updateSelectionHelper(object);
-    this.callbacks.onFaultSimulationChange(this.faultSimulationManager.refreshSelection(object));
+    const faultState = this.faultSimulationManager.refreshSelection(object);
+    this.callbacks.onFaultSimulationChange(faultState);
+    this.updateFaultCalloutAnchor(faultState, object);
     this.requestRender();
   }
 
@@ -896,6 +928,7 @@ export class TwinScene {
       return;
     }
 
+    this.closeFaultCallout();
     this.controlsManager.focusObject(object);
     this.callbacks.onCameraControlChange(this.controlsManager.getDebugState());
     this.requestRender();
@@ -906,12 +939,14 @@ export class TwinScene {
       return;
     }
 
+    this.closeFaultCallout();
     this.controlsManager.focusModel(this.modelRoot);
     this.callbacks.onCameraControlChange(this.controlsManager.getDebugState());
     this.requestRender();
   }
 
   resetView(): void {
+    this.closeFaultCallout();
     this.controlsManager.resetView();
     this.callbacks.onCameraControlChange(this.controlsManager.getDebugState());
     this.requestRender();
@@ -959,6 +994,8 @@ export class TwinScene {
   enableFaultSimulation(): FaultSimulationState {
     const state = this.faultSimulationManager.enable();
     this.callbacks.onFaultSimulationChange(state);
+    const selectedObject = this.selectedModelUuid ? this.findSceneObjectByUuid(this.selectedModelUuid) : undefined;
+    this.updateFaultCalloutAnchor(state, selectedObject);
     this.requestRender();
     return state;
   }
@@ -966,6 +1003,7 @@ export class TwinScene {
   disableFaultSimulation(): FaultSimulationState {
     const state = this.faultSimulationManager.disable();
     this.callbacks.onFaultSimulationChange(state);
+    this.callbacks.onFaultCalloutAnchorChange(undefined);
     this.requestRender();
     return state;
   }
@@ -1111,6 +1149,11 @@ export class TwinScene {
   dispose(): void {
     this.isDisposed = true;
     window.removeEventListener("resize", this.handleResize);
+    this.removeFaultCalloutInteractionListeners();
+    if (this.faultCalloutWheelFrameId) {
+      window.cancelAnimationFrame(this.faultCalloutWheelFrameId);
+      this.faultCalloutWheelFrameId = 0;
+    }
     if (this.animationFrameId) {
       window.cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = 0;
@@ -1137,8 +1180,107 @@ export class TwinScene {
   private readonly handleResize = (): void => {
     this.cameraManager.resize(this.container);
     this.rendererManager.resize(this.container);
+    this.refreshActiveFaultCalloutAnchor();
     this.requestRender();
   };
+
+  private installFaultCalloutInteractionListeners(): void {
+    const canvas = this.rendererManager.renderer.domElement;
+    canvas.addEventListener("wheel", this.handleFaultCalloutWheel, { passive: true });
+    canvas.addEventListener("pointerdown", this.handleFaultCalloutPointerDown);
+    canvas.addEventListener("pointermove", this.handleFaultCalloutPointerMove);
+    canvas.addEventListener("pointerup", this.handleFaultCalloutPointerEnd);
+    canvas.addEventListener("pointercancel", this.handleFaultCalloutPointerEnd);
+    canvas.addEventListener("pointerleave", this.handleFaultCalloutPointerEnd);
+    window.addEventListener("keydown", this.handleFaultCalloutKeyDown);
+  }
+
+  private removeFaultCalloutInteractionListeners(): void {
+    const canvas = this.rendererManager.renderer.domElement;
+    canvas.removeEventListener("wheel", this.handleFaultCalloutWheel);
+    canvas.removeEventListener("pointerdown", this.handleFaultCalloutPointerDown);
+    canvas.removeEventListener("pointermove", this.handleFaultCalloutPointerMove);
+    canvas.removeEventListener("pointerup", this.handleFaultCalloutPointerEnd);
+    canvas.removeEventListener("pointercancel", this.handleFaultCalloutPointerEnd);
+    canvas.removeEventListener("pointerleave", this.handleFaultCalloutPointerEnd);
+    window.removeEventListener("keydown", this.handleFaultCalloutKeyDown);
+  }
+
+  private readonly handleFaultCalloutWheel = (): void => {
+    if (!this.faultSimulationManager.getState().selectedFault || this.faultCalloutWheelFrameId) {
+      return;
+    }
+
+    this.faultCalloutWheelFrameId = window.requestAnimationFrame(() => {
+      this.faultCalloutWheelFrameId = 0;
+      this.refreshActiveFaultCalloutAnchor();
+    });
+  };
+
+  private readonly handleFaultCalloutPointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    this.faultCalloutPointerState = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+  };
+
+  private readonly handleFaultCalloutPointerMove = (event: PointerEvent): void => {
+    if (!this.faultCalloutPointerState || this.faultCalloutPointerState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const distance = Math.hypot(
+      event.clientX - this.faultCalloutPointerState.clientX,
+      event.clientY - this.faultCalloutPointerState.clientY,
+    );
+    if (distance > 5) {
+      this.faultCalloutPointerState = undefined;
+      this.closeFaultCallout();
+    }
+  };
+
+  private readonly handleFaultCalloutPointerEnd = (event: PointerEvent): void => {
+    if (!this.faultCalloutPointerState || this.faultCalloutPointerState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    this.faultCalloutPointerState = undefined;
+  };
+
+  private readonly handleFaultCalloutKeyDown = (event: KeyboardEvent): void => {
+    if (!this.isCameraMovementKey(event) || !this.canUseKeyboardCalloutClose(event.target)) {
+      return;
+    }
+
+    this.closeFaultCallout();
+  };
+
+  private isCameraMovementKey(event: KeyboardEvent): boolean {
+    const key = event.key.toLowerCase();
+    return key === "w" || key === "a" || key === "s" || key === "d" || key === "q" || key === "e";
+  }
+
+  private canUseKeyboardCalloutClose(target: EventTarget | null): boolean {
+    if (!document.hasFocus()) {
+      return false;
+    }
+
+    return !this.isEditableTarget(target) && !this.isEditableTarget(document.activeElement);
+  }
+
+  private isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+
+    const tagName = target.tagName.toLowerCase();
+    return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+  }
 
   private adaptCameraControlsToModel(root: Object3D): void {
     const box = new Box3().setFromObject(root);
@@ -1201,7 +1343,9 @@ export class TwinScene {
     );
     this.callbacks.onSelectModelNode(node);
     this.updateSelectionHelper(object);
-    this.callbacks.onFaultSimulationChange(this.faultSimulationManager.refreshSelection(object));
+    const faultState = this.faultSimulationManager.refreshSelection(object);
+    this.callbacks.onFaultSimulationChange(faultState);
+    this.updateFaultCalloutAnchor(faultState, object);
     this.requestRender();
   };
 
@@ -1215,7 +1359,9 @@ export class TwinScene {
     this.selectedMeshName = String(object.userData.areaDeviceId || object.userData.meshName || object.name || "");
     this.callbacks.onSelectModelNode(node);
     this.updateSelectionHelper(object);
-    this.callbacks.onFaultSimulationChange(this.faultSimulationManager.refreshSelection(object));
+    const faultState = this.faultSimulationManager.refreshSelection(object);
+    this.callbacks.onFaultSimulationChange(faultState);
+    this.updateFaultCalloutAnchor(faultState, object);
     this.requestRender();
   }
 
@@ -1227,7 +1373,13 @@ export class TwinScene {
     const match = this.findAreaDeviceByScreenPoint(pointer);
     if (match) {
       this.selectAreaDevice(match.deviceId, match.object);
+      return;
     }
+    this.callbacks.onFaultCalloutAnchorChange(undefined);
+  };
+
+  private readonly handleModelMiss = (): void => {
+    this.callbacks.onFaultCalloutAnchorChange(undefined);
   };
 
   private findAreaDeviceByScreenPoint(pointer: InteractionPointerInfo): { deviceId: string; object: Object3D } | undefined {
@@ -1488,6 +1640,82 @@ export class TwinScene {
 
   private getObjectWorldPosition(object: Object3D): Vector3 {
     object.updateMatrixWorld(true);
+    return object.getWorldPosition(new Vector3());
+  }
+
+  private updateFaultCalloutAnchor(state: FaultSimulationState, fallbackObject?: Object3D): void {
+    if (!state.enabled || !state.selectedFault) {
+      this.closeFaultCallout();
+      return;
+    }
+
+    const object = this.findFaultAnchorObject(state.selectedFault, fallbackObject);
+    this.callbacks.onFaultCalloutAnchorChange(object ? this.projectObjectToViewport(object) : undefined);
+  }
+
+  private refreshActiveFaultCalloutAnchor(): void {
+    this.updateFaultCalloutAnchor(this.faultSimulationManager.getState());
+  }
+
+  private closeFaultCallout(): void {
+    this.callbacks.onFaultCalloutAnchorChange(undefined);
+  }
+
+  private findFaultAnchorObject(fault: RuntimeFaultInfo, fallbackObject?: Object3D): Object3D | undefined {
+    const objectUuid = fault.matchedObjectUuid || fault.objectUuid;
+    if (objectUuid) {
+      const object = this.findSceneObjectByUuid(objectUuid);
+      if (object) {
+        return object;
+      }
+    }
+
+    const objectName = fault.matchedObjectName || fault.objectName;
+    if (objectName) {
+      const object = this.activeDetailRoot?.getObjectByName(objectName) ?? this.modelRoot?.getObjectByName(objectName);
+      if (object) {
+        return object;
+      }
+    }
+
+    return fallbackObject;
+  }
+
+  private projectObjectToViewport(object: Object3D): FaultCalloutAnchor | undefined {
+    const canvas = this.rendererManager.renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    const worldPosition = this.getObjectVisualWorldPosition(object);
+    const projected = worldPosition.project(this.cameraManager.camera);
+    if (
+      !Number.isFinite(projected.x) ||
+      !Number.isFinite(projected.y) ||
+      projected.z < -1 ||
+      projected.z > 1
+    ) {
+      return undefined;
+    }
+
+    const x = ((projected.x + 1) / 2) * rect.width;
+    const y = ((-projected.y + 1) / 2) * rect.height;
+    const padding = 80;
+    if (x < -padding || x > rect.width + padding || y < -padding || y > rect.height + padding) {
+      return undefined;
+    }
+
+    return {
+      x,
+      y,
+      viewportWidth: rect.width,
+      viewportHeight: rect.height,
+    };
+  }
+
+  private getObjectVisualWorldPosition(object: Object3D): Vector3 {
+    object.updateMatrixWorld(true);
+    const box = new Box3().setFromObject(object);
+    if (!box.isEmpty()) {
+      return box.getCenter(new Vector3());
+    }
     return object.getWorldPosition(new Vector3());
   }
 

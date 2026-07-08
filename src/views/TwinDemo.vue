@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { lifterBindingConfig, lifterTargetPositions } from "../config/lifterBindingConfig";
-import type { FaultSimulationState } from "../engine/FaultSimulationManager";
+import type { FaultSimulationState, RuntimeFaultInfo } from "../engine/FaultSimulationManager";
 import { modelConfigLocalStorageKey } from "../engine/LODModelLoader";
 import type { ModelMaterialState } from "../engine/ModelMaterialManager";
-import { TwinScene } from "../engine/TwinScene";
+import { TwinScene, type FaultCalloutAnchor } from "../engine/TwinScene";
 import { statusClassNames, statusLabels } from "../mock/deviceStatus";
 import type {
   AreaRuntimeState,
@@ -37,6 +37,24 @@ type ObjectFilterMode =
   | "group";
 
 type ObjectListMode = "all" | "search" | "children";
+
+type FaultCalloutInfo = Pick<
+  RuntimeFaultInfo,
+  | "faultCode"
+  | "faultLevel"
+  | "faultMessage"
+  | "partName"
+  | "objectName"
+  | "objectUuid"
+  | "matchedObjectName"
+  | "matchedObjectUuid"
+  | "occurTime"
+  | "suggestion"
+> & {
+  deviceId: string;
+};
+
+type FaultCalloutPlacement = "left" | "right";
 
 const viewportRef = ref<HTMLElement | null>(null);
 const twinScene = ref<TwinScene | null>(null);
@@ -98,6 +116,10 @@ const faultSimulationState = ref<FaultSimulationState>({
   activeFaults: [],
   message: "未配置异常模拟。",
 });
+const faultCalloutFault = ref<FaultCalloutInfo | undefined>();
+const faultCalloutAnchor = ref<FaultCalloutAnchor | undefined>();
+const isFaultCalloutVisible = ref(false);
+const faultCalloutExpanded = ref(false);
 const modelMaterialState = ref<ModelMaterialState>({
   preserveOriginalMaterial: true,
   defaultColor: undefined,
@@ -235,6 +257,58 @@ const filteredModelNodes = computed(() => {
 });
 const visibleModelNodes = computed(() => filteredModelNodes.value.slice(0, 100));
 const isResultLimited = computed(() => filteredModelNodes.value.length > visibleModelNodes.value.length);
+const faultCalloutLayout = computed(() => {
+  const anchor = faultCalloutAnchor.value;
+  if (!anchor) {
+    return {
+      placement: "right" as FaultCalloutPlacement,
+      style: {},
+      linePoints: "",
+      anchorX: 0,
+      anchorY: 0,
+      lineEndX: 0,
+      lineEndY: 0,
+      viewBox: "0 0 0 0",
+    };
+  }
+
+  const cardWidth = 300;
+  const estimatedCardHeight = faultCalloutExpanded.value ? 286 : 188;
+  const viewportMargin = 12;
+  const anchorGap = 24;
+  const preferredTopOffset = -40;
+  const hasRightSpace = anchor.x + anchorGap + cardWidth <= anchor.viewportWidth - viewportMargin;
+  const placement: FaultCalloutPlacement = hasRightSpace ? "right" : "left";
+  const maxLeft = Math.max(viewportMargin, anchor.viewportWidth - cardWidth - viewportMargin);
+  const rawLeft = placement === "right" ? anchor.x + anchorGap : anchor.x - anchorGap - cardWidth;
+  const left = clampNumber(rawLeft, viewportMargin, maxLeft);
+  const preferredTop = anchor.y + preferredTopOffset;
+  const downwardTop = anchor.y + anchorGap;
+  const maxTop = Math.max(viewportMargin, anchor.viewportHeight - estimatedCardHeight - viewportMargin);
+  const rawTop = preferredTop < viewportMargin ? downwardTop : preferredTop;
+  const top = clampNumber(rawTop, viewportMargin, maxTop);
+  const arrowTop = clampNumber(anchor.y - top, 24, estimatedCardHeight - 24);
+  const lineEndX = placement === "right" ? left : left + cardWidth;
+  const lineEndY = top + arrowTop;
+  const lineBendX = placement === "right"
+    ? Math.min(anchor.x + anchorGap * 0.75, lineEndX)
+    : Math.max(anchor.x - anchorGap * 0.75, lineEndX);
+
+  return {
+    placement,
+    style: {
+      left: `${left}px`,
+      top: `${top}px`,
+      "--fault-arrow-top": `${arrowTop}px`,
+    },
+    linePoints: `${anchor.x},${anchor.y} ${lineBendX},${anchor.y} ${lineBendX},${lineEndY} ${lineEndX},${lineEndY}`,
+    anchorX: anchor.x,
+    anchorY: anchor.y,
+    lineEndX,
+    lineEndY,
+    viewBox: `0 0 ${anchor.viewportWidth} ${anchor.viewportHeight}`,
+  };
+});
 
 function getMaxBoxSize(node: ModelObjectNode): number {
   if (!node.boundingBox) {
@@ -243,6 +317,10 @@ function getMaxBoxSize(node: ModelObjectNode): number {
 
   const size = node.boundingBox.size;
   return Math.max(size.x, size.y, size.z);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
 function selectDevice(device: TwinDevice): void {
@@ -325,11 +403,75 @@ function clearMovablePart(): void {
 }
 
 function enableFaultSimulation(): void {
-  faultSimulationState.value = twinScene.value?.enableFaultSimulation() ?? faultSimulationState.value;
+  const nextState = twinScene.value?.enableFaultSimulation() ?? faultSimulationState.value;
+  faultSimulationState.value = nextState;
+  syncFaultCallout(nextState);
 }
 
 function disableFaultSimulation(): void {
-  faultSimulationState.value = twinScene.value?.disableFaultSimulation() ?? faultSimulationState.value;
+  const nextState = twinScene.value?.disableFaultSimulation() ?? faultSimulationState.value;
+  faultSimulationState.value = nextState;
+  closeFaultCallout();
+}
+
+function syncFaultCallout(state: FaultSimulationState): void {
+  if (!state.enabled || !state.selectedFault) {
+    closeFaultCallout();
+    return;
+  }
+
+  const fault = state.selectedFault;
+  faultCalloutFault.value = {
+    faultCode: fault.faultCode,
+    faultLevel: fault.faultLevel,
+    faultMessage: fault.faultMessage,
+    partName: fault.partName,
+    objectName: fault.objectName,
+    objectUuid: fault.objectUuid,
+    matchedObjectName: fault.matchedObjectName,
+    matchedObjectUuid: fault.matchedObjectUuid,
+    occurTime: fault.occurTime,
+    suggestion: fault.suggestion,
+    deviceId: state.deviceId,
+  };
+  faultCalloutExpanded.value = false;
+  isFaultCalloutVisible.value = Boolean(faultCalloutAnchor.value);
+}
+
+function updateFaultCalloutAnchor(anchor: FaultCalloutAnchor | undefined): void {
+  if (!anchor) {
+    closeFaultCallout();
+    return;
+  }
+
+  faultCalloutAnchor.value = anchor;
+  isFaultCalloutVisible.value = Boolean(anchor && faultCalloutFault.value && faultSimulationState.value.enabled);
+}
+
+function toggleFaultCalloutDetails(): void {
+  faultCalloutExpanded.value = !faultCalloutExpanded.value;
+}
+
+function closeFaultCallout(): void {
+  isFaultCalloutVisible.value = false;
+  faultCalloutFault.value = undefined;
+  faultCalloutAnchor.value = undefined;
+  faultCalloutExpanded.value = false;
+}
+
+function getFaultCalloutObjectUuid(): string {
+  return faultCalloutFault.value?.objectUuid || faultCalloutFault.value?.matchedObjectUuid || "";
+}
+
+function formatFaultCalloutUuid(uuid: string): string {
+  if (!uuid) {
+    return "-";
+  }
+  if (uuid.length <= 18) {
+    return uuid;
+  }
+
+  return `${uuid.slice(0, 8)}...${uuid.slice(-6)}`;
 }
 
 function focusSelectedObject(): void {
@@ -542,7 +684,7 @@ function buildEditedModelConfig(): ModelExternalConfig | undefined {
     return undefined;
   }
 
-  return {
+  return buildPlainModelConfig({
     ...modelConfig.value,
     transform: buildCalibrationTransform(),
     materialConfig: {
@@ -554,7 +696,23 @@ function buildEditedModelConfig(): ModelExternalConfig | undefined {
       faultColor: modelConfig.value.materialConfig?.faultColor ?? modelMaterialState.value.faultColor,
       objectColors: modelConfig.value.materialConfig?.objectColors ?? [],
     },
-  };
+  });
+}
+
+function buildPlainModelConfig(config: ModelExternalConfig): ModelExternalConfig {
+  return JSON.parse(JSON.stringify({
+    modelId: config.modelId,
+    modelName: config.modelName,
+    modelUrl: config.modelUrl,
+    upAxis: config.upAxis,
+    transform: config.transform,
+    bindings: config.bindings,
+    lod: config.lod,
+    materialConfig: config.materialConfig,
+    faultSimulation: config.faultSimulation,
+    modeConfig: config.modeConfig,
+    performance: config.performance,
+  })) as ModelExternalConfig;
 }
 
 function applyCalibration(): void {
@@ -581,7 +739,7 @@ async function copyModelConfigJson(): Promise<void> {
     return;
   }
 
-  const json = `${JSON.stringify(nextConfig, null, 2)}\n`;
+  const json = `${JSON.stringify(buildPlainModelConfig(nextConfig), null, 2)}\n`;
   await navigator.clipboard.writeText(json);
   calibrationCopyMessage.value = "已复制 JSON。";
 }
@@ -593,7 +751,7 @@ function setAppMode(mode: AppMode): void {
     ? "当前编辑对象是整机模型 root，不是子部件。"
     : "已切换到监控模式。";
   if (mode === "edit") {
-    editBaselineConfig.value = modelConfig.value ? structuredClone(modelConfig.value) : undefined;
+    editBaselineConfig.value = modelConfig.value ? buildPlainModelConfig(modelConfig.value) : undefined;
     if (modelConfig.value) {
       syncCalibrationForm(modelConfig.value);
     }
@@ -606,13 +764,14 @@ function saveModelConfigToLocal(): void {
     return;
   }
 
+  const plainConfig = buildPlainModelConfig(nextConfig);
   const payload = {
-    config: nextConfig,
+    config: plainConfig,
     updatedAt: new Date().toISOString(),
     source: "localStorage",
   };
   window.localStorage.setItem(modelConfigLocalStorageKey, JSON.stringify(payload, null, 2));
-  editBaselineConfig.value = structuredClone(nextConfig);
+  editBaselineConfig.value = plainConfig;
   editModeMessage.value = `已保存到 localStorage：${modelConfigLocalStorageKey}`;
 }
 
@@ -622,11 +781,12 @@ function exportModelConfigJson(): void {
     return;
   }
 
-  const blob = new Blob([`${JSON.stringify(nextConfig, null, 2)}\n`], { type: "application/json" });
+  const plainConfig = buildPlainModelConfig(nextConfig);
+  const blob = new Blob([`${JSON.stringify(plainConfig, null, 2)}\n`], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${nextConfig.modelId || "model-config"}.json`;
+  link.download = `${plainConfig.modelId || "model-config"}.json`;
   link.click();
   URL.revokeObjectURL(url);
   editModeMessage.value = "已导出 JSON。";
@@ -693,7 +853,7 @@ async function restoreStaticModelConfig(): Promise<void> {
   if (nextConfig) {
     modelConfig.value = nextConfig;
     syncCalibrationForm(nextConfig);
-    editBaselineConfig.value = structuredClone(nextConfig);
+    editBaselineConfig.value = buildPlainModelConfig(nextConfig);
     editModeMessage.value = "已恢复静态 lifter.json 配置预览；如需取消本地覆盖，请点击清除本地配置。";
   }
 }
@@ -703,7 +863,7 @@ function resetCurrentEdit(): void {
     return;
   }
 
-  const nextConfig = twinScene.value?.applyModelConfig(structuredClone(editBaselineConfig.value));
+  const nextConfig = twinScene.value?.applyModelConfig(buildPlainModelConfig(editBaselineConfig.value));
   if (nextConfig) {
     modelConfig.value = nextConfig;
     syncCalibrationForm(nextConfig);
@@ -760,7 +920,7 @@ onMounted(async () => {
           appMode.value = initialMode;
           twinScene.value?.setAppMode(initialMode);
           hasInitializedAppMode.value = true;
-          editBaselineConfig.value = structuredClone(config);
+          editBaselineConfig.value = buildPlainModelConfig(config);
         }
       }
     },
@@ -781,6 +941,10 @@ onMounted(async () => {
     },
     onFaultSimulationChange: (state) => {
       faultSimulationState.value = state;
+      syncFaultCallout(state);
+    },
+    onFaultCalloutAnchorChange: (anchor) => {
+      updateFaultCalloutAnchor(anchor);
     },
     onModelMaterialChange: (state) => {
       modelMaterialState.value = state;
@@ -822,6 +986,95 @@ onBeforeUnmount(() => {
                   ? "Fallback 场景"
                   : "真实 GLB"
           }}
+        </div>
+        <div class="fault-callout-layer" aria-live="polite">
+          <svg
+            v-if="isFaultCalloutVisible && faultCalloutFault"
+            class="fault-callout-link"
+            :viewBox="faultCalloutLayout.viewBox"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <polyline class="fault-callout-link-line" :points="faultCalloutLayout.linePoints" />
+            <circle class="fault-callout-link-dot" :cx="faultCalloutLayout.anchorX" :cy="faultCalloutLayout.anchorY" r="4" />
+            <circle class="fault-callout-link-end" :cx="faultCalloutLayout.lineEndX" :cy="faultCalloutLayout.lineEndY" r="3" />
+          </svg>
+          <section
+            v-if="isFaultCalloutVisible && faultCalloutFault"
+            :class="['fault-callout', `placement-${faultCalloutLayout.placement}`]"
+            :style="faultCalloutLayout.style"
+            aria-label="设备异常"
+          >
+            <header class="fault-callout-header">
+              <div>
+                <p class="fault-callout-kicker">Fault</p>
+                <h2>设备异常</h2>
+              </div>
+              <button class="fault-callout-close" type="button" aria-label="关闭异常气泡" @click="closeFaultCallout">
+                ×
+              </button>
+            </header>
+
+            <dl class="fault-callout-grid">
+              <div>
+                <dt>faultCode</dt>
+                <dd>{{ faultCalloutFault.faultCode }}</dd>
+              </div>
+              <div>
+                <dt>faultLevel</dt>
+                <dd>
+                  <span
+                    :class="[
+                      'fault-level-badge',
+                      {
+                        error: faultCalloutFault.faultLevel === 'error',
+                        warning: faultCalloutFault.faultLevel === 'warning',
+                      },
+                    ]"
+                  >
+                    {{ faultCalloutFault.faultLevel }}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>faultMessage</dt>
+                <dd class="fault-callout-message">{{ faultCalloutFault.faultMessage }}</dd>
+              </div>
+              <div>
+                <dt>partName</dt>
+                <dd>{{ faultCalloutFault.partName ?? "-" }}</dd>
+              </div>
+              <div>
+                <dt>deviceId</dt>
+                <dd>{{ faultCalloutFault.deviceId || "-" }}</dd>
+              </div>
+
+              <template v-if="faultCalloutExpanded">
+                <div>
+                  <dt>objectName</dt>
+                  <dd>{{ faultCalloutFault.objectName ?? faultCalloutFault.matchedObjectName ?? "-" }}</dd>
+                </div>
+                <div>
+                  <dt>objectUuid</dt>
+                  <dd class="fault-callout-uuid" :title="getFaultCalloutObjectUuid()">
+                    {{ formatFaultCalloutUuid(getFaultCalloutObjectUuid()) }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>occurTime</dt>
+                  <dd>{{ faultCalloutFault.occurTime || "-" }}</dd>
+                </div>
+                <div>
+                  <dt>suggestion</dt>
+                  <dd class="fault-callout-suggestion">{{ faultCalloutFault.suggestion ?? "-" }}</dd>
+                </div>
+              </template>
+            </dl>
+
+            <button class="fault-callout-toggle" type="button" @click="toggleFaultCalloutDetails">
+              {{ faultCalloutExpanded ? "收起" : "详情" }}
+            </button>
+          </section>
         </div>
       </div>
 
@@ -1878,5 +2131,6 @@ onBeforeUnmount(() => {
         </details>
       </aside>
     </section>
+
   </main>
 </template>

@@ -143,9 +143,33 @@ export class FaultSimulationManager {
     return objectName ? this.root.getObjectByName(objectName) : undefined;
   }
 
-  private findFaultForObject(object?: Object3D): RuntimeFaultInfo | undefined {
+  findFaultForObject(object?: Object3D): RuntimeFaultInfo | undefined {
     if (!object) {
       return undefined;
+    }
+
+    const objectChain: Object3D[] = [];
+    for (let current: Object3D | null = object; current; current = current.parent) {
+      objectChain.push(current);
+    }
+
+    for (const current of objectChain) {
+      const uuidMatch = this.matchedFaults.find((item) => item.fault.objectUuid?.trim() === current.uuid);
+      if (uuidMatch?.fault) {
+        return uuidMatch.fault;
+      }
+    }
+
+    for (const current of objectChain) {
+      const objectName = current.name?.trim();
+      if (!objectName) {
+        continue;
+      }
+
+      const nameMatch = this.matchedFaults.find((item) => item.fault.objectName?.trim() === objectName);
+      if (nameMatch?.fault) {
+        return nameMatch.fault;
+      }
     }
 
     return this.matchedFaults.find((item) => {
@@ -153,17 +177,15 @@ export class FaultSimulationManager {
         return false;
       }
 
-      return item.object === object || this.isAncestorOf(item.object, object);
+      return this.isAncestorOf(item.object, object);
     })?.fault;
   }
 
   private isAncestorOf(parent: Object3D, child: Object3D): boolean {
-    let current: Object3D | null = child;
-    while (current) {
+    for (let current: Object3D | null = child; current; current = current.parent) {
       if (current === parent) {
         return true;
       }
-      current = current.parent;
     }
     return false;
   }
