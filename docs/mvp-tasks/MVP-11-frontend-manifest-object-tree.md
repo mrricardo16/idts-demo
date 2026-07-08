@@ -22,7 +22,7 @@
 - `src/views/TwinDemo.vue`
 - `src/styles/**`
 - `config/**`
-- `doc/**`
+- `docs/**`
 
 实际执行时必须先扫描当前源码后再确认精确范围。
 

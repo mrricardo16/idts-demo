@@ -24,7 +24,7 @@
 - `server/src/IdtsTwin.Infrastructure/**`
 - `server/src/IdtsTwin.Worker/**`
 - `server/src/IdtsTwin.Contracts/**`
-- `doc/**`
+- `docs/**`
 
 ## 4. 禁止修改范围
 
@@ -38,6 +38,12 @@
 - 不允许实现 GLB 上传。
 - 不允许实现 manifest、object-tree、可动部件、motion target 或场景业务 API。
 - 不允许修改前端源码。
+- 不设计完整错误码体系。
+- 不设计业务异常枚举。
+- 不设计 `Result<T>` 全量框架。
+- 不引入数据库日志。
+- 不引入 OpenTelemetry。
+- Serilog、统一异常处理、统一响应结构只做最小占位。
 
 ## 5. 详细执行步骤
 

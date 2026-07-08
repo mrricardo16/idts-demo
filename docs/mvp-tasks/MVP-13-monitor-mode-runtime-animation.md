@@ -21,7 +21,7 @@
 - `src/engine/**`
 - `src/views/TwinDemo.vue`
 - `src/styles/**`
-- `doc/**`
+- `docs/**`
 
 实际执行时必须先扫描当前任务动画、F1/F2/F3/F4、worldZ、monitor guard 和可动部件 runtime 状态代码后再确认精确范围。
 

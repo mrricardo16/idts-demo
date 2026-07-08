@@ -22,7 +22,7 @@
 - `server/src/IdtsTwin.Contracts/**`
 - `server/src/IdtsTwin.Infrastructure/Migrations/**`
 - `server/**/appsettings*.json`
-- `doc/**`
+- `docs/**`
 
 ## 4. 禁止修改范围
 

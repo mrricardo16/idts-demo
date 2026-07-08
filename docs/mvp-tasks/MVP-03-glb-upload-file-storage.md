@@ -21,7 +21,7 @@
 - `server/src/IdtsTwin.Domain/**`
 - `server/src/IdtsTwin.Infrastructure/**`
 - `server/**/appsettings*.json`
-- `doc/**`
+- `docs/**`
 
 ## 4. 禁止修改范围
 

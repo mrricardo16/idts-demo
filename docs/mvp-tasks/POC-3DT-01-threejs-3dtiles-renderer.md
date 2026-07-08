@@ -20,7 +20,7 @@
 - `src/router/**`，如项目已有路由。
 - `src/views/TwinDemo.vue`，仅允许新增非侵入入口时触碰。
 - `public/tilesets/**`，仅允许放置最小测试 tileset。
-- `doc/**`
+- `docs/**`
 
 实际执行时必须先扫描当前项目结构后再确认精确范围。
 

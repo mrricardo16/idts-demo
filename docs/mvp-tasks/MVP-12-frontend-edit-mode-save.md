@@ -20,7 +20,7 @@
 - `src/engine/**`
 - `src/views/TwinDemo.vue`
 - `src/styles/**`
-- `doc/**`
+- `docs/**`
 
 实际执行时必须先扫描当前 edit 模式、可动部件配置、localStorage 和目标点位相关代码后再确认精确范围。
 

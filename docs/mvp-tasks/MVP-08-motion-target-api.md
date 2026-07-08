@@ -21,7 +21,7 @@
 - `server/src/IdtsTwin.Contracts/**`
 - `server/src/IdtsTwin.Domain/**`
 - `server/src/IdtsTwin.Infrastructure/**`
-- `doc/**`
+- `docs/**`
 
 ## 4. 禁止修改范围
 
